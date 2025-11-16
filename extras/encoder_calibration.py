@@ -404,11 +404,11 @@ class EncoderCalibration:
             desc="[SSH ONLY] Toggle live diagnostics monitor",
         )
         
-        # Add calibration command
+        # Add LUT calibration command (with underscore like Auto_Offset pattern)
         self.gcode.register_command(
-            "START_ENCODER_CALIBRATION",
-            self.cmd_START_ENCODER_CALIBRATION,
-            desc="Start automatic encoder calibration (2 full rotations)",
+            "_START_ENCODER_CALIBRATION",
+            self.cmd__START_ENCODER_CALIBRATION,
+            desc="Start automatic encoder LUT calibration (2 full rotations)",
         )
         
         # Add wheel diameter calibration command
@@ -835,8 +835,8 @@ class EncoderCalibration:
             import traceback
             self._respond_error(traceback.format_exc())
     
-    def cmd_START_ENCODER_CALIBRATION(self, gcmd):
-        """Start automatic encoder calibration with 2 full rotations"""
+    def cmd__START_ENCODER_CALIBRATION(self, gcmd):
+        """Start automatic encoder LUT calibration with 2 full rotations"""
         if not self.bg.is_connected():
             self._respond_error("❌ Encoder nicht verbunden!")
             return
