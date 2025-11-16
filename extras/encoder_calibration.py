@@ -14,6 +14,12 @@ import time
 from typing import Optional, Tuple
 from uuid import UUID
 
+# Klipper ADC interface
+try:
+    from . import bus
+except ImportError:
+    bus = None
+
 try:
     import bleak
     from bleak import BleakClient, BleakScanner
@@ -30,6 +36,8 @@ SERVICE_UUID = UUID("12345678-1234-1234-1234-123456789abc")
 CHAR_UUID_POSITION = UUID("12345678-1234-1234-1234-123456789001")
 CHAR_UUID_RESET = UUID("12345678-1234-1234-1234-123456789002")
 CHAR_UUID_CONFIG = UUID("12345678-1234-1234-1234-123456789003")
+CHAR_UUID_DIAGNOSTICS = UUID("12345678-1234-1234-1234-123456789004")
+CHAR_UUID_ADC = UUID("12345678-1234-1234-1234-123456789005")
 
 
 class EncoderBackground:
@@ -54,6 +62,8 @@ class EncoderBackground:
         self.char_position = None
         self.char_reset = None
         self.char_config = None
+        self.char_diagnostics = None
+        self.char_adc = None
     
     def start(self):
         """Start background thread"""
@@ -69,6 +79,24 @@ class EncoderBackground:
     def is_connected(self):
         """Check if BLE is connected"""
         return self._connected.is_set()
+        
+    def start_calibration(self):
+        """Start encoder calibration mode"""
+        if not self._connected.is_set() or not self.char_config:
+            raise RuntimeError("Not connected to encoder")
+            
+        # Send command to start calibration
+        cmd = b"START_CAL"
+        return self._run_in_loop(self._write_characteristic, self.char_config, cmd)
+    
+    def end_calibration(self):
+        """End calibration and save LUT"""
+        if not self._connected.is_set() or not self.char_config:
+            raise RuntimeError("Not connected to encoder")
+            
+        # Send command to end calibration and save LUT
+        cmd = b"END_CAL"
+        return self._run_in_loop(self._write_characteristic, self.char_config, cmd)
     
     def _worker(self):
         """Background worker thread"""
@@ -165,6 +193,8 @@ class EncoderBackground:
         self.char_position = self.client.services.get_characteristic(CHAR_UUID_POSITION)
         self.char_reset = self.client.services.get_characteristic(CHAR_UUID_RESET)
         self.char_config = self.client.services.get_characteristic(CHAR_UUID_CONFIG)
+        self.char_diagnostics = self.client.services.get_characteristic(CHAR_UUID_DIAGNOSTICS)
+        self.char_adc = self.client.services.get_characteristic(CHAR_UUID_ADC)
         
         if not self.char_position:
             raise Exception("Position characteristic not found")
@@ -172,6 +202,10 @@ class EncoderBackground:
             raise Exception("Reset characteristic not found")
         if not self.char_config:
             raise Exception("Config characteristic not found")
+        if not self.char_diagnostics:
+            raise Exception("Diagnostics characteristic not found")
+        if not self.char_adc:
+            self.log.warning("ADC characteristic not found - hall sensors not available")
         
         self.log.info("All characteristics discovered")
     
@@ -198,7 +232,27 @@ class EncoderBackground:
         if not self.is_connected() or not self.char_reset:
             raise Exception("Not connected")
         
-        await self.client.write_gatt_char(self.char_reset, b"\x01")
+        # Schreibe 0x01 um Reset auszulösen
+        await self.client.write_gatt_char(self.char_reset, bytes([0x01]))
+        self.log.info("Position reset to 0")
+    
+    async def start_diagnostics_serial_mode(self):
+        """Start diagnostics serial output on Pico"""
+        if not self.is_connected() or not self.char_reset:
+            raise Exception("Not connected")
+        
+        # Schreibe 0x02 um Diagnostics Mode zu starten
+        await self.client.write_gatt_char(self.char_reset, bytes([0x02]))
+        self.log.info("Diagnostics serial mode STARTED on Pico")
+    
+    async def stop_diagnostics_serial_mode(self):
+        """Stop diagnostics serial output on Pico"""
+        if not self.is_connected() or not self.char_reset:
+            raise Exception("Not connected")
+        
+        # Schreibe 0x03 um Diagnostics Mode zu stoppen
+        await self.client.write_gatt_char(self.char_reset, bytes([0x03]))
+        self.log.info("Diagnostics serial mode STOPPED on Pico")
     
     async def write_config(self, wheel_diameter: float):
         """Write wheel diameter configuration"""
@@ -211,6 +265,41 @@ class EncoderBackground:
         await self.client.write_gatt_char(self.char_config, data)
         self.log.info(f"Config sent to Pico: wheel_diameter={wheel_diameter}mm")
     
+    async def read_adc(self) -> Tuple[int, int]:
+        """Read ADC values from hall sensors (adc1, adc2)"""
+        if not self.is_connected() or not self.char_adc:
+            raise Exception("Not connected or ADC characteristic not available")
+        
+        data = await self.client.read_gatt_char(self.char_adc)
+        
+        if len(data) < 4:
+            raise Exception(f"Invalid ADC data length: {len(data)} (expected 4)")
+        
+        import struct
+        # Parse: uint16 adc1 + uint16 adc2 (little-endian, 12-bit values 0-4095)
+        adc1 = struct.unpack('<H', data[0:2])[0]
+        adc2 = struct.unpack('<H', data[2:4])[0]
+        
+        return adc1, adc2
+    
+    async def read_diagnostics(self) -> Tuple[int, int, int]:
+        """Read encoder diagnostics (magnitude, agc, diagnostics_flags)"""
+        if not self.is_connected() or not self.char_diagnostics:
+            raise Exception("Not connected")
+        
+        data = await self.client.read_gatt_char(self.char_diagnostics)
+        
+        if len(data) < 4:
+            raise Exception(f"Invalid diagnostics data length: {len(data)} (expected 4)")
+        
+        import struct
+        # Parse: uint16 magnitude + uint8 agc + uint8 diagnostics
+        magnitude = struct.unpack('<H', data[0:2])[0]
+        agc = data[2]
+        diagnostics_flags = data[3]
+        
+        return magnitude, agc, diagnostics_flags
+    
     def run_async(self, coro):
         """Run coroutine in background loop"""
         if not self._loop:
@@ -218,6 +307,22 @@ class EncoderBackground:
         
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result(timeout=10.0)
+    
+    async def _write_characteristic(self, char, data):
+        """Helper to write to a characteristic"""
+        if not self.client or not self._connected.is_set():
+            raise RuntimeError("Not connected to encoder")
+        return await self.client.write_gatt_char(char.uuid, data, response=True)
+    
+    def _run_in_loop(self, func, *args, **kwargs):
+        """Run a BLE operation in the event loop"""
+        if not self._loop or not self._loop.is_running():
+            raise RuntimeError("Event loop not running")
+        
+        future = asyncio.run_coroutine_threadsafe(
+            func(*args, **kwargs), self._loop
+        )
+        return future.result(timeout=10.0)  # 10 second timeout
 
 
 class EncoderCalibration:
@@ -254,6 +359,13 @@ class EncoderCalibration:
         self.bg = EncoderBackground(
             self.name, self, self.ble_address, self.connection_timeout
         )
+        self.bg._printer = self.printer  # For pin manager
+        
+        # Register virtual ADC pins for hall sensors
+        reactor = self.printer.get_reactor()
+        self.encoder_pins = EncoderPins(self.bg, reactor)
+        ppins = self.printer.lookup_object('pins')
+        ppins.register_chip('encoder', self.encoder_pins)
         
         # Register G-Code commands
         self.gcode.register_command(
@@ -281,6 +393,40 @@ class EncoderCalibration:
             self.cmd_ENCODER_PRINT_STATUS,
             desc="Print encoder system status",
         )
+        self.gcode.register_command(
+            "_ENCODER_ALIGNMENT_TEST",
+            self.cmd_ENCODER_ALIGNMENT_TEST,
+            desc="Test sensor alignment (10 second test)",
+        )
+        self.gcode.register_command(
+            "_ENCODER_DIAGNOSTICS_LIVE",
+            self.cmd_ENCODER_DIAGNOSTICS_LIVE,
+            desc="[SSH ONLY] Toggle live diagnostics monitor",
+        )
+        
+        # Add calibration command
+        self.gcode.register_command(
+            "START_ENCODER_CALIBRATION",
+            self.cmd_START_ENCODER_CALIBRATION,
+            desc="Start automatic encoder calibration (2 full rotations)",
+        )
+        
+        # Add wheel diameter calibration command
+        self.gcode.register_command(
+            "CALIBRATE_ENCODER_WHEEL",
+            self.cmd_CALIBRATE_ENCODER_WHEEL,
+            desc="Calibrate encoder wheel diameter by measuring known filament length",
+        )
+        
+        # Add save wheel diameter command
+        self.gcode.register_command(
+            "SAVE_ENCODER_WHEEL_DIAMETER",
+            self.cmd_SAVE_ENCODER_WHEEL_DIAMETER,
+            desc="Save the calibrated wheel diameter to config",
+        )
+        
+        # Initialize pending diameter
+        self._pending_wheel_diameter = None
         
         # Start background worker
         self.bg.start()
@@ -453,6 +599,295 @@ class EncoderCalibration:
         self._respond(f"Max Iterations: {self.max_iterations}")
         self._respond(f"{'═' * 40}")
     
+    cmd_ENCODER_ALIGNMENT_TEST_help = "Test sensor alignment (10 second test)"
+    def cmd_ENCODER_ALIGNMENT_TEST(self, gcmd):
+        """10-second alignment test - measures magnitude variation while rotating"""
+        if not self.bg.is_connected():
+            self._respond_error("Not connected")
+            return
+        
+        self._respond("🔧 SENSOR ALIGNMENT TEST")
+        self._respond(f"{'━' * 40}")
+        self._respond("Drehe das Encoder-Rad langsam für 10 Sekunden...")
+        self._respond("")
+        
+        samples = []
+        start_time = time.time()
+        
+        try:
+            while time.time() - start_time < 10.0:
+                magnitude, agc, diag_flags = self.bg.run_async(self.bg.read_diagnostics())
+                samples.append(magnitude)
+                
+                # Live output
+                status = "✅" if 3000 <= magnitude <= 5000 else "⚠️"
+                self._respond(f"Mag: {magnitude:4d} | AGC: {agc:3d} | {status}")
+                
+                time.sleep(0.2)  # 5Hz sampling
+            
+            # Analyze results
+            min_mag = min(samples)
+            max_mag = max(samples)
+            avg_mag = sum(samples) / len(samples)
+            variation = max_mag - min_mag
+            
+            # Calculate standard deviation
+            import math
+            variance = sum((x - avg_mag) ** 2 for x in samples) / len(samples)
+            std_dev = math.sqrt(variance)
+            
+            self._respond("")
+            self._respond(f"{'━' * 40}")
+            self._respond("📊 ALIGNMENT ERGEBNIS:")
+            self._respond(f"{'━' * 40}")
+            self._respond(f"Magnitude:")
+            self._respond(f"  Min: {min_mag}  Max: {max_mag}  Variation: {variation}")
+            self._respond(f"  Durchschnitt: {avg_mag:.1f}  StdDev: {std_dev:.1f}")
+            
+            # Rating
+            if variation < 50:
+                rating = "✅ PERFEKT ZENTRIERT!"
+                advice = "Sensor ist optimal ausgerichtet."
+            elif variation < 200:
+                rating = "✅ GUT"
+                advice = "Ausrichtung ist akzeptabel."
+            elif variation < 500:
+                rating = "⚠️ MITTEL"
+                advice = "Sensor könnte besser zentriert werden."
+            else:
+                rating = "❌ SCHLECHT"
+                advice = "Sensor ist exzentrisch! Bitte neu ausrichten."
+            
+            self._respond(f"  AGC Durchschnitt: {sum(s[1] for s in [(self.bg.run_async(self.bg.read_diagnostics())) for _ in range(5)]) / 5:.0f}")
+            self._respond("")
+            self._respond(rating)
+            self._respond(advice)
+            self._respond(f"{'━' * 40}")
+            
+        except Exception as e:
+            self._respond_error(f"Test failed: {e}")
+    
+    cmd_ENCODER_DIAGNOSTICS_LIVE_help = "Toggle live diagnostics monitor"
+    def cmd_ENCODER_DIAGNOSTICS_LIVE(self, gcmd):
+        """Toggle live diagnostics on Pico - outputs to Pico Serial Monitor!"""
+        if not self.bg.is_connected():
+            self._respond_error("Not connected")
+            return
+        
+        # Check if already running
+        if hasattr(self, '_diagnostics_running') and self._diagnostics_running:
+            try:
+                self.bg.run_async(self.bg.stop_diagnostics_serial_mode())
+                self._diagnostics_running = False
+                self._respond("✅ Live diagnostics monitor GESTOPPT")
+                self._respond("📺 Pico Serial Monitor gestoppt")
+            except Exception as e:
+                self._respond_error(f"Stop failed: {e}")
+            return
+        
+        # Start diagnostics mode on Pico
+        try:
+            self.bg.run_async(self.bg.start_diagnostics_serial_mode())
+            self._diagnostics_running = True
+            self._respond("✅ Live diagnostics monitor GESTARTET")
+            self._respond("📺 Öffne Pico Serial Monitor (115200 baud)!")
+            self._respond("📊 Live Mag/AGC Werte erscheinen dort")
+            self._respond("⏸️  Zum Stoppen: ENCODER_DIAGNOSTICS_LIVE nochmal ausführen")
+        except Exception as e:
+            self._respond_error(f"Start failed: {e}")
+    
+    def cmd_CALIBRATE_ENCODER_WHEEL(self, gcmd):
+        """Calibrate encoder wheel diameter by measuring known filament length"""
+        if not self.bg.is_connected():
+            self._respond_error("❌ Encoder nicht verbunden!")
+            return
+        
+        # Get filament length (required parameter)
+        filament_length = gcmd.get_float("LENGTH", None)
+        if filament_length is None:
+            self._respond_error("❌ Fehler: LENGTH parameter erforderlich!")
+            self._respond("   Beispiel: CALIBRATE_ENCODER_WHEEL LENGTH=100")
+            return
+        
+        if filament_length <= 0 or filament_length > 500:
+            self._respond_error("❌ Fehler: LENGTH muss zwischen 0 und 500mm sein!")
+            return
+        
+        self._respond("📏 Starte Rad-Durchmesser Kalibrierung...")
+        self._respond(f"• Filament-Länge: {filament_length}mm")
+        self._respond("")
+        self._respond("🔄 ANLEITUNG:")
+        self._respond("   1. Markiere Filament bei 0mm")
+        self._respond(f"   2. Schiebe {filament_length}mm Filament durch (von Hand oder Extruder)")
+        self._respond("   3. Warte 3 Sekunden ohne Bewegung")
+        self._respond("   4. System erkennt automatisch das Ende!")
+        self._respond("")
+        
+        try:
+            # Reset encoder position
+            self._respond("🔄 Setze Encoder auf Null...")
+            self.bg.run_async(self.bg.reset_position())
+            time.sleep(0.5)
+            
+            # Wait for user to push filament
+            self._respond("⏸️  Warte auf Filament-Durchschub...")
+            self._respond(f"   Schiebe jetzt {filament_length}mm Filament durch!")
+            self._respond("   (System wartet auf 3 Sekunden stabile Position)")
+            
+            # Read initial position
+            initial_steps, _, _ = self.bg.run_async(self.bg.read_position())
+            
+            # Wait for user confirmation (we'll check position changes)
+            start_time = time.time()
+            last_steps = initial_steps
+            stable_count = 0
+            
+            self._respond("")
+            self._respond("📊 Warte auf stabile Position...")
+            
+            while True:
+                time.sleep(0.5)
+                current_steps, _, _ = self.bg.run_async(self.bg.read_position())
+                
+                # Check if position is stable (no movement for 3 seconds)
+                if abs(current_steps - last_steps) < 10:
+                    stable_count += 1
+                    if stable_count >= 6:  # 3 seconds stable
+                        break
+                else:
+                    stable_count = 0
+                    self._respond(f"   Steps: {current_steps}")
+                
+                last_steps = current_steps
+                
+                # Timeout after 2 minutes
+                if time.time() - start_time > 120:
+                    self._respond_error("⏱️  Timeout! Kalibrierung abgebrochen.")
+                    return
+            
+            # Read final position
+            final_steps, _, _ = self.bg.run_async(self.bg.read_position())
+            total_steps = abs(final_steps - initial_steps)
+            
+            if total_steps < 100:
+                self._respond_error("❌ Fehler: Zu wenig Bewegung erkannt!")
+                self._respond(f"   Gemessen: {total_steps} steps")
+                self._respond("   Mindestens 100 steps erforderlich")
+                return
+            
+            # Calculate wheel diameter
+            # Formula: diameter = (length * resolution) / (steps * π)
+            calculated_diameter = (filament_length * self.encoder_resolution) / (total_steps * 3.14159265359)
+            
+            self._respond("")
+            self._respond("✅ Messung abgeschlossen!")
+            self._respond(f"   Gemessene Steps: {total_steps}")
+            self._respond(f"   Filament-Länge: {filament_length}mm")
+            self._respond(f"   Berechneter Durchmesser: {calculated_diameter:.3f}mm")
+            self._respond("")
+            
+            # Ask for confirmation
+            self._respond("💾 Möchtest du diesen Wert speichern?")
+            self._respond(f"   Aktuell: {self.wheel_diameter:.3f}mm")
+            self._respond(f"   Neu: {calculated_diameter:.3f}mm")
+            self._respond("")
+            self._respond("   Zum Speichern: SAVE_ENCODER_WHEEL_DIAMETER")
+            
+            # Store for later save
+            self._pending_wheel_diameter = calculated_diameter
+            
+        except Exception as e:
+            self._respond_error(f"❌ Fehler: {str(e)}")
+            import traceback
+            self._respond_error(traceback.format_exc())
+    
+    def cmd_SAVE_ENCODER_WHEEL_DIAMETER(self, gcmd):
+        """Save the calibrated wheel diameter"""
+        if self._pending_wheel_diameter is None:
+            self._respond_error("❌ Keine Kalibrierung vorhanden!")
+            self._respond("   Führe zuerst CALIBRATE_ENCODER_WHEEL aus")
+            return
+        
+        try:
+            # Update local values
+            old_diameter = self.wheel_diameter
+            self.wheel_diameter = self._pending_wheel_diameter
+            self.wheel_circumference = 3.14159265359 * self.wheel_diameter
+            
+            # Send to Pico
+            self._respond(f"📤 Sende neuen Durchmesser an Pico...")
+            self.bg.run_async(self.bg.write_config(self.wheel_diameter))
+            
+            self._respond("")
+            self._respond("✅ Raddurchmesser gespeichert!")
+            self._respond(f"   Alt: {old_diameter:.3f}mm")
+            self._respond(f"   Neu: {self.wheel_diameter:.3f}mm")
+            self._respond(f"   Umfang: {self.wheel_circumference:.3f}mm")
+            self._respond("")
+            self._respond("💡 WICHTIG: Aktualisiere encoder_calibration.cfg:")
+            self._respond(f"   wheel_diameter: {self.wheel_diameter:.3f}")
+            
+            # Clear pending
+            self._pending_wheel_diameter = None
+            
+        except Exception as e:
+            self._respond_error(f"❌ Fehler beim Speichern: {str(e)}")
+            import traceback
+            self._respond_error(traceback.format_exc())
+    
+    def cmd_START_ENCODER_CALIBRATION(self, gcmd):
+        """Start automatic encoder calibration with 2 full rotations"""
+        if not self.bg.is_connected():
+            self._respond_error("❌ Encoder nicht verbunden!")
+            return
+            
+        # Get parameters with defaults
+        speed = gcmd.get_float("SPEED", 5.0)  # mm/s
+        distance = gcmd.get_float("DISTANCE", self.wheel_circumference * 2)  # 2 full rotations
+        
+        self._respond("🔧 Starte automatische Encoder-Kalibrierung...")
+        self._respond(f"• Umdrehungen: {distance/self.wheel_circumference:.1f}")
+        self._respond(f"• Strecke: {distance:.2f}mm")
+        self._respond(f"• Geschwindigkeit: {speed}mm/s")
+        self._respond(" ")
+        self._respond("🔄 Bewege das Filament nicht während der Kalibrierung!")
+        
+        try:
+            # Start calibration mode on Pico
+            self._respond("\n🚀 Starte Kalibrierungsmodus...")
+            self.bg.start_calibration()
+            
+            # Move extruder
+            self._respond(f"\n🔄 Bewege Extruder um {distance:.2f}mm...")
+            gcmd.respond_info("Bewege Extruder für Kalibrierung...")
+            
+            # Save current position
+            toolhead = self.printer.lookup_object('toolhead')
+            toolhead.wait_moves()
+            
+            # Move in relative mode
+            self.gcode.run_script(f"""
+                G91                   ; Relativmodus
+                G1 E{distance:.2f} F{speed*60:.0f}  ; Extrudieren mit {speed}mm/s
+                G90                   ; Zurück zum Absolutmodus
+            """)
+            
+            # Wait for movement to complete
+            while toolhead.is_moving():
+                time.sleep(0.1)
+            
+            # End calibration and save LUT
+            self._respond("\n💾 Speichere Kalibrierung...")
+            self.bg.end_calibration()
+            
+            self._respond("\n✅ Encoder-Kalibrierung erfolgreich abgeschlossen!")
+            self._respond("   Die neuen Kalibrierungsdaten wurden gespeichert.")
+            
+        except Exception as e:
+            self._respond_error(f"\n❌ Fehler bei der Kalibrierung: {str(e)}")
+            import traceback
+            self._respond_error(traceback.format_exc())
+    
     # ========================================================================
     # Helpers
     # ========================================================================
@@ -462,8 +897,128 @@ class EncoderCalibration:
         self.gcode.respond_info(msg)
     
     def _respond_error(self, msg: str):
-        """Send error message to console"""
-        self.gcode.respond_info(f"!! {msg}")
+        self.gcode.respond_raw(f"!! {msg}\n")
+
+
+# ============================================================================
+# Virtual ADC Pins for Hall Sensors
+# ============================================================================
+
+class EncoderADCPin:
+    """
+    Virtual ADC pin that reads values from Pico via BLE
+    Compatible with Klipper's hall_filament_width_sensor
+    """
+    def __init__(self, encoder_bg, adc_channel):
+        """
+        Args:
+            encoder_bg: EncoderBackground instance
+            adc_channel: 1 or 2 (ADC1 or ADC2)
+        """
+        self.encoder_bg = encoder_bg
+        self.adc_channel = adc_channel
+        self._last_value = 0.0
+        self._mcu = None
+        self._callback = None
+        self._sample_time = 0.001  # 1ms default
+        self._sample_count = 1
+        self._report_time = 0.5  # 500ms default
+        self._timer = None
+    
+    def get_mcu(self):
+        """Return virtual MCU (encoder)"""
+        return self._mcu
+    
+    def setup_adc_callback(self, report_time, callback):
+        """Setup callback for ADC readings"""
+        self._report_time = report_time
+        self._callback = callback
+    
+    def setup_adc_sample(self, sample_time, sample_count):
+        """Setup ADC sampling parameters"""
+        self._sample_time = sample_time
+        self._sample_count = sample_count
+    
+    def setup_minmax(self, sample_time, minval, maxval, range_check_count=0):
+        """Setup min/max range (not used for virtual ADC)"""
+        pass
+    
+    def _read_adc_value(self):
+        """Read ADC value from Pico via BLE"""
+        try:
+            if not self.encoder_bg.is_connected():
+                return self._last_value
+            
+            # Read ADC values from Pico (run async in background loop)
+            adc1, adc2 = self.encoder_bg.run_async(self.encoder_bg.read_adc())
+            
+            # Select correct channel
+            raw_value = adc1 if self.adc_channel == 1 else adc2
+            
+            # Convert 12-bit ADC (0-4095) to normalized value (0.0-1.0)
+            # Klipper expects values in range 0.0-1.0
+            normalized = raw_value / 4095.0
+            
+            self._last_value = normalized
+            return normalized
+            
+        except Exception as e:
+            logging.error(f"EncoderADCPin: Error reading ADC{self.adc_channel}: {e}")
+            return self._last_value
+    
+    def _timer_callback(self, eventtime):
+        """Timer callback to read ADC and call user callback"""
+        try:
+            value = self._read_adc_value()
+            if self._callback:
+                self._callback(eventtime, value)
+        except Exception as e:
+            logging.error(f"EncoderADCPin: Timer callback error: {e}")
+        
+        return eventtime + self._report_time
+
+
+class EncoderPins:
+    """
+    Pin manager for virtual encoder ADC pins
+    Registers with Klipper's pin system
+    """
+    def __init__(self, encoder_bg, reactor):
+        self.encoder_bg = encoder_bg
+        self.reactor = reactor
+        self.pins = {}
+    
+    def setup_pin(self, pin_type, pin_params):
+        """Setup a virtual pin"""
+        if pin_type != 'adc':
+            raise Exception(f"Encoder pins only support 'adc' type, got '{pin_type}'")
+        
+        # Parse pin name: "encoder:adc1" or "encoder:adc2"
+        pin_name = pin_params['pin']
+        if not pin_name.startswith('encoder:'):
+            raise Exception(f"Invalid encoder pin name: {pin_name}")
+        
+        adc_name = pin_name.split(':', 1)[1]
+        if adc_name not in ['adc1', 'adc2']:
+            raise Exception(f"Invalid ADC channel: {adc_name}. Use 'adc1' or 'adc2'")
+        
+        adc_channel = 1 if adc_name == 'adc1' else 2
+        
+        # Create or return existing pin
+        if pin_name not in self.pins:
+            pin = EncoderADCPin(self.encoder_bg, adc_channel)
+            pin._mcu = self  # Virtual MCU
+            self.pins[pin_name] = pin
+            
+            # Start timer for this pin
+            pin._timer = self.reactor.register_timer(pin._timer_callback)
+            self.reactor.update_timer(pin._timer, self.reactor.NOW)
+        
+        return self.pins[pin_name]
+    
+    def get_printer(self):
+        """Return printer object (for MCU interface)"""
+        return self.encoder_bg._printer if hasattr(self.encoder_bg, '_printer') else None
 
 
 def load_config(config):
