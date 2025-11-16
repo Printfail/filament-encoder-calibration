@@ -14,6 +14,7 @@
 - [Hardware](#-hardware)
 - [Installation](#-installation)
 - [Verbindung](#-verbindung)
+- [Erste Schritte](#-erste-schritte-nach-installation)
 - [Verwendung](#-verwendung)
 - [Konfiguration](#-konfiguration)
 - [Troubleshooting](#-troubleshooting)
@@ -30,6 +31,10 @@
 ✅ **Adaptive Noise Calibration** - Filtert Sensor-Rauschen automatisch  
 ✅ **Echtzeit-Feedback** - Live Filament-Geschwindigkeit und Position  
 ✅ **Iterative Verfeinerung** - Wiederholt Messung bis Toleranz erreicht  
+🆕 **Sensor Alignment Tool** - Automatischer Test zur optimalen Sensor-Positionierung  
+🆕 **Live Diagnostics** - Echtzeit Magnetfeld-Überwachung für perfekte Montage  
+🆕 **Hall-Sensor Integration** - SS49E Filament-Durchmesser-Messung via virtuelle ADC-Pins  
+🆕 **Automatische Extrusion-Anpassung** - Kompatibel mit Klipper's `hall_filament_width_sensor`  
 
 ---
 
@@ -43,9 +48,11 @@
 | **AS5048A** | 14-bit Magnetischer Encoder | [Link](https://ams.com/as5048a) |
 | **Neodym-Magnet** | 6mm x 2mm (diametral magnetisiert) | Amazon/Aliexpress |
 | **Encoder-Rad** | 10-15mm Durchmesser (genau messen!) | 3D-gedruckt |
+| **SS49E Hall-Sensoren** *(Optional)* | 2x Analog Hall-Sensoren für Filament-Durchmesser | Amazon/Aliexpress |
 
 ### Anschluss-Schema
 
+#### AS5048A Encoder (Pflicht)
 ```
 Raspberry Pi Pico W          AS5048A Encoder
 ┌────────────────┐          ┌──────────────┐
@@ -59,6 +66,20 @@ Raspberry Pi Pico W          AS5048A Encoder
 │  GND         ◄─┼──────────┤ GND          │
 │                │          │              │
 └────────────────┘          └──────────────┘
+```
+
+#### SS49E Hall-Sensoren (Optional - für Filament-Durchmesser)
+```
+Raspberry Pi Pico W          SS49E Sensor 1    SS49E Sensor 2
+┌────────────────┐          ┌──────────────┐  ┌──────────────┐
+│                │          │              │  │              │
+│  GP26 (ADC0) ◄─┼──────────┤ Signal       │  │              │
+│  GP27 (ADC1) ◄─┼──────────┼──────────────┼──┤ Signal       │
+│                │          │              │  │              │
+│  3.3V        ◄─┼──────────┤ VCC          ├──┤ VCC          │
+│  GND         ◄─┼──────────┤ GND          ├──┤ GND          │
+│                │          │              │  │              │
+└────────────────┘          └──────────────┘  └──────────────┘
 ```
 
 ### Mechanischer Aufbau
@@ -193,6 +214,48 @@ Max Iterations: 5
 
 ---
 
+## 🎯 Erste Schritte nach Installation
+
+### 1️⃣ Sensor-Ausrichtung prüfen (WICHTIG!)
+
+**Bevor du kalibrierst, stelle sicher dass der Sensor optimal ausgerichtet ist:**
+
+```gcode
+ENCODER_ALIGNMENT_TEST
+```
+
+**Ablauf:**
+1. Befehl starten
+2. Encoder-Rad 10 Sekunden langsam per Hand drehen
+3. Ergebnis auswerten:
+   - ✅ **Variation < 50**: Perfekt! Weiter mit Kalibrierung
+   - ⚠️ **Variation 50-200**: Gut genug, aber optimierbar
+   - ❌ **Variation > 200**: Sensor neu positionieren!
+
+**Bei schlechter Ausrichtung:**
+- Prüfe ob Magnet mittig auf der Welle sitzt
+- Prüfe Abstand Sensor ↔ Magnet (2-4mm optimal)
+- Nutze `ENCODER_DIAGNOSTICS_LIVE` für Echtzeit-Feedback beim Justieren
+
+---
+
+### 2️⃣ Erste Kalibrierung durchführen
+
+**Wenn Alignment ✅ ist:**
+
+```gcode
+# Hotend aufheizen:
+M104 S210
+M109 S210
+
+# Kalibrierung starten:
+START_ENCODER_CALIBRATION
+```
+
+**System kalibriert vollautomatisch!**
+
+---
+
 ## 🚀 Verwendung
 
 ### Vollautomatische Kalibrierung
@@ -244,6 +307,123 @@ ENCODER_RESET_POSITION
 ```
 
 **Setzt Position auf 0 - nützlich vor manuellen Tests.**
+
+---
+
+### 🔧 Sensor-Ausrichtung testen (NEU!)
+
+```gcode
+ENCODER_ALIGNMENT_TEST
+```
+
+**Was passiert:**
+1. ✅ Misst Magnetfeld-Stärke (Magnitude) für 10 Sekunden
+2. ✅ Du drehst das Encoder-Rad langsam per Hand
+3. ✅ System berechnet Variation der Magnitude
+4. ✅ Gibt Bewertung aus:
+   - ✅ **PERFEKT** (Variation < 50) - Sensor optimal zentriert
+   - ✅ **GUT** (Variation < 200) - Akzeptabel
+   - ⚠️ **MITTEL** (Variation < 500) - Könnte besser sein
+   - ❌ **SCHLECHT** (Variation > 500) - Sensor ist exzentrisch!
+
+**Ausgabe:**
+```
+📊 ALIGNMENT ERGEBNIS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+Magnitude:
+  Min: 3498  Max: 3507  Variation: 9
+  Durchschnitt: 3502.3  StdDev: 2.8
+  AGC Durchschnitt: 128
+
+✅ PERFEKT ZENTRIERT!
+Sensor ist optimal ausgerichtet.
+```
+
+**Wofür?**
+- Hilft beim Montieren des Sensors
+- Zeigt ob Magnet mittig auf der Welle sitzt
+- Prüft ob Abstand Sensor ↔ Magnet optimal ist
+
+---
+
+### 🔍 Live Diagnostics anzeigen (NEU!)
+
+```gcode
+ENCODER_DIAGNOSTICS_LIVE    # Start
+ENCODER_DIAGNOSTICS_LIVE    # Stop (Toggle)
+```
+
+**Was passiert:**
+- Zeigt **Magnitude** (Magnetfeld-Stärke) live an
+- Zeigt **AGC** (Automatic Gain Control) live an
+- Warnt bei zu schwachem/starkem Magnet
+- Toggle: Nochmal aufrufen zum Stoppen
+
+**Ausgabe:**
+```
+Mag: 3502 | AGC: 128 | ✅
+Mag: 3498 | AGC: 127 | ✅
+Mag: 4200 | AGC: 156 | ⚠️ ZU STARK
+```
+
+**Wofür?**
+- Echtzeit-Feedback beim Justieren
+- Sensor-Position optimieren
+- Prüfen ob Magnet erkannt wird
+
+---
+
+### 📏 Filament-Durchmesser Messung (Optional - NEU!)
+
+**Hardware:** 2x SS49E Hall-Sensoren an GPIO 26 + 27
+
+**Setup:**
+```ini
+# In printer.cfg oder separate Datei:
+[hall_filament_width_sensor]
+adc1: encoder:adc1  # ← Virtueller Pin vom Pico!
+adc2: encoder:adc2  # ← Virtueller Pin vom Pico!
+cal_dia1: 1.50
+cal_dia2: 2.00
+raw_dia1: 9500
+raw_dia2: 10500
+default_nominal_filament_diameter: 1.75
+max_difference: 0.200
+measurement_delay: 70
+enable: False
+```
+
+**Kalibrierung:**
+```gcode
+# 1. Filament mit 1.50mm einlegen
+QUERY_RAW_FILAMENT_WIDTH
+# Notiere RAW-Wert (z.B. 9500)
+
+# 2. Filament mit 2.00mm einlegen
+QUERY_RAW_FILAMENT_WIDTH
+# Notiere RAW-Wert (z.B. 10500)
+
+# 3. Werte in Config eintragen
+```
+
+**Verwendung:**
+```gcode
+ENABLE_FILAMENT_WIDTH_SENSOR   # Aktivieren
+ENABLE_FILAMENT_WIDTH_LOG      # Logging aktivieren
+QUERY_FILAMENT_WIDTH           # Aktuellen Durchmesser anzeigen
+```
+
+**Was passiert:**
+- Pico liest SS49E Sensoren (12-bit ADC)
+- Sendet Werte via BLE
+- Klipper berechnet Filament-Durchmesser
+- Passt automatisch Extrusion an (M221)
+
+**Beispiel:**
+```
+Filament: 1.70mm (statt 1.75mm)
+→ Extrusion wird um ~3% reduziert
+```
 
 ---
 
