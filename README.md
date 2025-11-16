@@ -171,6 +171,31 @@ sudo systemctl restart klipper
 
 ---
 
+### 4️⃣ Automatische Updates (Optional)
+
+**Moonraker Update Manager einrichten:**
+
+Füge in `moonraker.conf` hinzu:
+```ini
+[update_manager encoder_calibration]
+type: git_repo
+channel: dev
+path: ~/filament-encoder-calibration
+origin: https://github.com/Printfail/filament-encoder-calibration.git
+managed_services: klipper
+primary_branch: main
+install_script: install.sh
+```
+
+**Dann:**
+```bash
+sudo systemctl restart moonraker
+```
+
+**Ab jetzt:** Updates erscheinen automatisch in Mainsail/Fluidd unter "Machine" → "Update Manager" 🎉
+
+---
+
 ## 🔗 Verbindung
 
 ### Automatische Verbindung
