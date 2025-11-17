@@ -40,15 +40,31 @@ Dieses System **misst die tatsächlich extrudierte Filament-Länge** mit einem h
 
 1. 📦 **[Hardware kaufen](#-stückliste-bill-of-materials)** - ~20-25€, dauert 1 Woche Lieferzeit
 2. 🔌 **[Verkabeln](#-verkabelung)** - 6 Kabel verbinden (10 Minuten)
-3. � **[Firmware flashen](#1️⃣-pico-w-firmware-flashen)** - BOOTSEL drücken, UF2 kopieren (2 Minuten)
-4. ⚙️ **[Klipper installieren](#2️⃣-klipper-module-installieren)** - Python + Config kopieren (5 Minuten)
+3. 📥 **[Firmware flashen](#1️⃣-pico-w-firmware-flashen)** - BOOTSEL drücken, UF2 kopieren (2 Minuten)
+4. ⚙️ **[Klipper installieren](#methode-a-automatisches-install-script--empfohlen)** - One-Liner via SSH (1 Minute!)
 5. 🎯 **[Erste Kalibrierung](#2️⃣-erste-kalibrierung-durchführen)** - `START_ENCODER_CALIBRATION` (5 Minuten)
 
-**Gesamt-Zeit:** ~30 Minuten Setup + 1 Woche Lieferzeit
+**Gesamt-Zeit:** ~20 Minuten Setup + 1 Woche Lieferzeit
+
+**📝 Kürzeste Installation:**
+```bash
+# 1. Pico flashen (BOOTSEL + drag & drop .uf2)
+# 2. SSH zum Raspberry Pi
+ssh pi@mainsailos.local
+
+# 3. One-Liner ausführen
+bash <(wget -qO- https://raw.githubusercontent.com/Printfail/filament-encoder-calibration/main/install.sh)
+
+# 4. In printer.cfg einfügen:
+[include Encoder/encoder_calibration.cfg]
+
+# 5. BLE-Adresse anpassen & Klipper neustarten
+# 6. Fertig! START_ENCODER_CALIBRATION
+```
 
 ---
 
-## � Inhaltsverzeichnis
+## 📖 Inhaltsverzeichnis
 
 - [Quick Start](#-quick-start)
 - [Was macht dieses Projekt?](#-was-macht-dieses-projekt)
@@ -212,21 +228,84 @@ cp encoder_calibration.uf2 /media/username/RPI-RP2/
 
 ### 2️⃣ Klipper Module installieren
 
+#### **Methode A: Automatisches Install-Script** ⭐ **EMPFOHLEN**
+
+**One-Liner Installation (SSH zum Raspberry Pi):**
+
 ```bash
-# SSH zum Raspberry Pi:
+# SSH zum Raspberry Pi
 ssh pi@mainsailos.local
 
-# Python Dependencies installieren:
-~/klippy-env/bin/pip install bleak
-
-# Config-Dateien kopieren:
-cd ~/printer_data/config
+# One-Liner Installation (lädt automatisch von GitHub)
+bash <(wget -qO- https://raw.githubusercontent.com/Printfail/filament-encoder-calibration/main/install.sh)
 ```
 
-**Von Windows:**
+**ODER: Manueller Modus mit interaktivem Menü:**
+
 ```bash
-scp encoder_calibration.py pi@mainsailos.local:~/klipper/klippy/extras/
-scp encoder_calibration.cfg pi@mainsailos.local:~/printer_data/config/
+# SSH zum Raspberry Pi
+ssh pi@mainsailos.local
+
+# Repository klonen
+cd ~
+git clone https://github.com/Printfail/filament-encoder-calibration.git
+cd filament-encoder-calibration
+
+# Install-Script ausführen
+chmod +x install.sh
+./install.sh
+```
+
+**Das Script zeigt ein Menü:**
+```
+╔════════════════════════════════════════════════════════════╗
+║                        HAUPT-MENÜ                          ║
+╠════════════════════════════════════════════════════════════╣
+║  1) Neu installieren                                       ║
+║  2) Update / Re-installieren                               ║
+║  3) Deinstallieren                                         ║
+║  4) Status anzeigen                                        ║
+║  5) Beenden                                                ║
+╚════════════════════════════════════════════════════════════╝
+```
+
+**Was das Script automatisch macht:**
+- ✅ Installiert `encoder_calibration.py` als Symlink in `~/klipper/klippy/extras/`
+- ✅ Erstellt `~/printer_data/config/Encoder/` Ordner
+- ✅ Kopiert `encoder_calibration.cfg` und `rotation_distance.cfg`
+- ✅ Installiert Python-Paket `bleak`
+- ✅ Bietet Klipper-Neustart an
+
+---
+
+#### **Methode B: Manuelle Installation**
+
+**Für Fortgeschrittene oder wenn install.sh nicht funktioniert:**
+
+```bash
+# SSH zum Raspberry Pi
+ssh pi@mainsailos.local
+
+# Python Dependencies installieren
+~/klippy-env/bin/pip install bleak
+
+# Ordner erstellen
+mkdir -p ~/printer_data/config/Encoder
+```
+
+**Von Windows (SCP):**
+```bash
+# Python-Modul kopieren
+scp extras/encoder_calibration.py pi@mainsailos.local:~/klipper/klippy/extras/
+
+# Configs kopieren
+scp config/encoder_calibration.cfg pi@mainsailos.local:~/printer_data/config/Encoder/
+scp config/rotation_distance.cfg pi@mainsailos.local:~/printer_data/config/Encoder/
+```
+
+**Klipper neu starten:**
+```bash
+sudo systemctl restart klipper
 ```
 
 ---
@@ -235,14 +314,30 @@ scp encoder_calibration.cfg pi@mainsailos.local:~/printer_data/config/
 
 **In `printer.cfg` einfügen:**
 ```ini
-[include encoder_calibration.cfg]
+[include Encoder/encoder_calibration.cfg]
 ```
 
-**In `encoder_calibration.cfg` anpassen:**
+**In `~/printer_data/config/Encoder/encoder_calibration.cfg` anpassen:**
 ```ini
 [encoder_calibration]
 ble_address: 28:CD:C1:07:90:00  # ← Deine Pico MAC-Adresse!
 wheel_diameter: 15.0             # ← Durchmesser genau messen!
+```
+
+**📍 Pico MAC-Adresse finden:**
+
+**Methode 1 - BLE Scan:**
+```bash
+# Via SSH auf Raspberry Pi
+sudo timeout 10 bluetoothctl scan on
+# Suche nach "Encoder-PicoW" in der Liste
+```
+
+**Methode 2 - Serial Monitor:**
+```bash
+# Via USB-Kabel am PC
+sudo minicom -D /dev/ttyACM0 -b 115200
+# Zeigt beim Boot: "BLE Address: 28:CD:C1:07:90:00"
 ```
 
 **Klipper neu starten:**
@@ -598,7 +693,7 @@ sudo systemctl restart bluetooth
 ```ini
 # In printer.cfg:
 # [include nevermore.cfg]  ← Auskommentieren
-[include encoder_calibration.cfg]
+[include Encoder/encoder_calibration.cfg]
 ```
 
 ---
