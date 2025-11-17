@@ -1,24 +1,70 @@
 # 🎯 Filament Encoder Calibration
 
-**Automatische `rotation_distance` Kalibrierung für Klipper 3D-Drucker mittels AS5048A Encoder**
+**Präzise `rotation_distance` Auto-Kalibrierung für Klipper 3D-Drucker mit AS5048A Magnetic Encoder**
 
 [![Hardware](https://img.shields.io/badge/Hardware-Raspberry_Pi_Pico_W-green)](https://www.raspberrypi.com/products/raspberry-pi-pico/)
 [![Sensor](https://img.shields.io/badge/Sensor-AS5048A-blue)](https://ams.com/as5048a)
 [![Klipper](https://img.shields.io/badge/Klipper-Compatible-red)](https://www.klipper3d.org/)
+[![License](https://img.shields.io/badge/License-GPL_v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 ---
 
-## 📖 Inhaltsverzeichnis
+## 💡 Was macht dieses Projekt?
 
+Dieses System **misst die tatsächlich extrudierte Filament-Länge** mit einem hochpräzisen Encoder und **kalibriert automatisch** Klippers `rotation_distance` Parameter. 
+
+**Warum ist das wichtig?**
+- ✅ Extruder-Steps sind oft **ungenau** (Getriebe-Spiel, Compression)
+- ✅ Manuelles Messen ist **fehleranfällig** (Lineal-Methode ±5%)
+- ✅ Dieser Encoder liefert **±0.01mm Genauigkeit** (14-bit Auflösung)
+- ✅ **Vollautomatisch** - einfach `START_ENCODER_CALIBRATION` ausführen!
+
+**Das System:**
+1. Extrudiert 100mm Filament @ 2mm/s
+2. Encoder misst tatsächliche Länge (z.B. 97.3mm)
+3. Berechnet neue `rotation_distance` automatisch
+4. Wiederholt bis ±1% Genauigkeit erreicht
+5. Speichert in `printer.cfg` ✅
+
+**Zusätzlich:**
+- 🔧 Sensor-Alignment-Test (Magnet-Zentrierung prüfen)
+- 📊 Live-Diagnostics (Echtzeit Magnetfeld-Überwachung)
+- 📏 Hall-Sensor Integration (Filament-Durchmesser-Messung)
+- 📡 Bluetooth LE (kabellos zwischen Pico W ↔ Raspberry Pi)
+
+---
+
+## ⚡ Quick Start
+
+**Neu hier? Folge diesem 5-Schritte-Plan:**
+
+1. 📦 **[Hardware kaufen](#-stückliste-bill-of-materials)** - ~20-25€, dauert 1 Woche Lieferzeit
+2. 🔌 **[Verkabeln](#-verkabelung)** - 6 Kabel verbinden (10 Minuten)
+3. � **[Firmware flashen](#1️⃣-pico-w-firmware-flashen)** - BOOTSEL drücken, UF2 kopieren (2 Minuten)
+4. ⚙️ **[Klipper installieren](#2️⃣-klipper-module-installieren)** - Python + Config kopieren (5 Minuten)
+5. 🎯 **[Erste Kalibrierung](#2️⃣-erste-kalibrierung-durchführen)** - `START_ENCODER_CALIBRATION` (5 Minuten)
+
+**Gesamt-Zeit:** ~30 Minuten Setup + 1 Woche Lieferzeit
+
+---
+
+## � Inhaltsverzeichnis
+
+- [Quick Start](#-quick-start)
+- [Was macht dieses Projekt?](#-was-macht-dieses-projekt)
 - [Features](#-features)
 - [Hardware](#-hardware)
+  - [Stückliste](#-stückliste-bill-of-materials)
+  - [Verkabelung](#-verkabelung)
 - [Installation](#-installation)
-- [Verbindung](#-verbindung)
+  - [Pico W flashen](#1️⃣-pico-w-firmware-flashen)
+  - [Klipper installieren](#2️⃣-klipper-module-installieren)
 - [Erste Schritte](#-erste-schritte-nach-installation)
 - [Verwendung](#-verwendung)
-- [Konfiguration](#-konfiguration)
+- [G-Code Makros & Befehle](#-g-code-makros--befehle)
+- [Konfiguration](#️-konfiguration)
 - [Troubleshooting](#-troubleshooting)
-- [Technische Details](#-technische-details)
+- [Best Practices](#-best-practices)
 
 ---
 
@@ -40,47 +86,52 @@
 
 ## 🛠️ Hardware
 
-### Komponenten
+### 📦 Stückliste (Bill of Materials)
 
-| Komponente | Beschreibung | Link |
-|------------|--------------|------|
-| **Raspberry Pi Pico W** | Microcontroller mit BLE Support | [Link](https://www.raspberrypi.com/products/raspberry-pi-pico/) |
-| **AS5048A** | 14-bit Magnetischer Encoder | [Link](https://ams.com/as5048a) |
-| **Neodym-Magnet** | 6mm x 2mm (diametral magnetisiert) | Amazon/Aliexpress |
-| **Encoder-Rad** | 10-15mm Durchmesser (genau messen!) | 3D-gedruckt |
-| **SS49E Hall-Sensoren** *(Optional)* | 2x Analog Hall-Sensoren für Filament-Durchmesser | Amazon/Aliexpress |
+| # | Komponente | Beschreibung | Menge | Kosten (ca.) | Bezugsquelle |
+|---|------------|--------------|-------|--------------|--------------|
+| 1 | **Raspberry Pi Pico W** | RP2040 Microcontroller mit WiFi/BLE | 1x | ~7€ | [Reichelt](https://www.reichelt.de/) / [Berrybase](https://www.berrybase.de/) |
+| 2 | **AS5048A Breakout Board** | 14-bit magnetischer Encoder (SPI) | 1x | ~8€ | [AliExpress](https://aliexpress.com/) / [eBay](https://ebay.de/) |
+| 3 | **Neodym-Magnet** | 6mm Ø × 2mm, **diametral magnetisiert** | 1x | ~2€ | [Amazon](https://www.amazon.de/) / [AliExpress](https://aliexpress.com/) |
+| 4 | **Encoder-Rad** | 10-15mm Durchmesser (STL im Repo) | 1x | ~0€ | Selbst 3D-drucken |
+| 5 | **Dupont-Kabel** | Female-Female, ~15cm | 6x | ~3€ | [Amazon](https://www.amazon.de/) / [Reichelt](https://www.reichelt.de/) |
+| 6 | **SS49E Hall-Sensor** *(Optional)* | Analog Linear Hall-Sensor | 2x | ~3€ | [AliExpress](https://aliexpress.com/) / [eBay](https://ebay.de/) |
+| 7 | **USB-C Kabel** | Für Pico W Stromversorgung | 1x | ~5€ | [Amazon](https://www.amazon.de/) |
+| | | | | **TOTAL:** | **~20-25€** |
 
-### Anschluss-Schema
+**⚠️ MAGNET-HINWEIS:** Achte darauf dass der Magnet **diametral** (North-South gegenüber) und **NICHT axial** (North oben, South unten) magnetisiert ist!
 
-#### AS5048A Encoder (Pflicht)
-```
-Raspberry Pi Pico W          AS5048A Encoder
-┌────────────────┐          ┌──────────────┐
-│                │          │              │
-│  GP16 (MISO) ◄─┼──────────┤ MISO         │
-│  GP17 (CS)   ◄─┼──────────┤ CS           │
-│  GP18 (CLK)  ◄─┼──────────┤ CLK          │
-│  GP19 (MOSI) ◄─┼──────────┤ MOSI         │
-│                │          │              │
-│  3.3V        ◄─┼──────────┤ VCC          │
-│  GND         ◄─┼──────────┤ GND          │
-│                │          │              │
-└────────────────┘          └──────────────┘
-```
+**🔍 Suchbegriffe:**
+- Amazon/AliExpress: "AS5048A SPI magnetic encoder"
+- Magnet: "6x2mm diametral neodymium magnet" oder "D6x2mm N S pole"
 
-#### SS49E Hall-Sensoren (Optional - für Filament-Durchmesser)
-```
-Raspberry Pi Pico W          SS49E Sensor 1    SS49E Sensor 2
-┌────────────────┐          ┌──────────────┐  ┌──────────────┐
-│                │          │              │  │              │
-│  GP26 (ADC0) ◄─┼──────────┤ Signal       │  │              │
-│  GP27 (ADC1) ◄─┼──────────┼──────────────┼──┤ Signal       │
-│                │          │              │  │              │
-│  3.3V        ◄─┼──────────┤ VCC          ├──┤ VCC          │
-│  GND         ◄─┼──────────┤ GND          ├──┤ GND          │
-│                │          │              │  │              │
-└────────────────┘          └──────────────┘  └──────────────┘
-```
+### Verkabelung
+
+#### 🔌 AS5048A Encoder (Pflicht)
+
+| Pico W Pin | GPIO | Funktion | → | AS5048A Pin | Beschreibung |
+|-----------|------|----------|---|-------------|--------------|
+| Pin 21 | GP16 | SPI0 RX (MISO) | → | **MISO** | Daten vom Sensor |
+| Pin 22 | GP17 | SPI0 CSn | → | **CS** | Chip Select (LOW = aktiv) |
+| Pin 24 | GP18 | SPI0 SCK | → | **CLK** | Takt (1 MHz) |
+| Pin 25 | GP19 | SPI0 TX (MOSI) | → | **MOSI** | Daten zum Sensor |
+| Pin 36 | 3V3(OUT) | Stromversorgung | → | **VCC** | 3.3V (100mA max) |
+| Pin 38 | GND | Ground | → | **GND** | Masse |
+
+**⚠️ WICHTIG:** Verwende 3.3V, **NICHT** 5V! AS5048A ist 3.3V only!
+
+---
+
+#### 🔌 SS49E Hall-Sensoren (Optional - für Filament-Durchmesser)
+
+| Pico W Pin | GPIO | Funktion | → | SS49E #1 | SS49E #2 |
+|-----------|------|----------|---|----------|----------|
+| Pin 31 | GP26 | ADC0 | → | **Signal** | - |
+| Pin 32 | GP27 | ADC1 | → | - | **Signal** |
+| Pin 36 | 3V3(OUT) | Stromversorgung | → | **VCC** | **VCC** |
+| Pin 38 | GND | Ground | → | **GND** | **GND** |
+
+**💡 TIPP:** Hall-Sensoren gegenüber montieren (90° versetzt) für beste Messung!
 
 ### Mechanischer Aufbau
 
@@ -109,22 +160,52 @@ Filament
 
 ### 1️⃣ Pico W Firmware flashen
 
+#### Kompilierte Firmware verwenden (EINFACH ✅)
+
+1. **Download:** `encoder_calibration.uf2` aus dem `build/` Ordner
+2. **BOOTSEL drücken:** Halte den BOOTSEL-Button auf dem Pico W gedrückt
+3. **USB einstecken:** Verbinde Pico W mit PC (während BOOTSEL gedrückt)
+4. **Laufwerk erscheint:** Pico W als "RPI-RP2" USB-Laufwerk erkannt
+5. **Firmware kopieren:** Drag & Drop `encoder_calibration.uf2` auf Laufwerk
+6. **Automatischer Neustart:** Pico bootet automatisch mit neuer Firmware
+7. **✅ Fertig!** LED sollte blinken, Pico sendet BLE Advertisement
+
+#### Selbst kompilieren (FORTGESCHRITTEN)
+
+**Voraussetzungen:**
+- WSL2 (Windows) oder Linux
+- Pico SDK installiert
+
+**Build-Schritte:**
 ```bash
-# Build Firmware (WSL oder Linux):
+# Pico SDK Path setzen
+export PICO_SDK_PATH=/home/user/pico-sdk
+
+# In encoder-pico Ordner wechseln
 cd encoder-pico
+
+# Build-Ordner erstellen
 mkdir build && cd build
+
+# CMake konfigurieren
 cmake ..
+
+# Kompilieren (4 Threads)
 make -j4
 
-# Flash:
-# 1. Halte BOOTSEL Button auf Pico
-# 2. Stecke USB ein
-# 3. Kopiere encoder_calibration.uf2 auf RPI-RP2 Laufwerk
+# Resultat: build/encoder_calibration.uf2
 ```
 
-**Windows:**
+**Windows (PowerShell):**
 ```powershell
+# UF2 kopieren (E: = RPI-RP2 Laufwerk)
 copy encoder_calibration.uf2 E:\
+```
+
+**Linux/WSL:**
+```bash
+# UF2 kopieren
+cp encoder_calibration.uf2 /media/username/RPI-RP2/
 ```
 
 ---
@@ -622,15 +703,44 @@ int16_t detect_overflow(uint16_t current_angle) {
 
 ---
 
-## 📜 G-Code Befehle
+## 📜 G-Code Makros & Befehle
 
-| Befehl | Beschreibung | Parameter |
-|--------|--------------|-----------|
-| `ENCODER_STATUS` | Zeigt Verbindungsstatus | - |
-| `ENCODER_GET_POSITION` | Liest aktuelle Position | - |
-| `ENCODER_RESET_POSITION` | Setzt Position auf 0 | - |
-| `START_ENCODER_CALIBRATION` | Startet Auto-Kalibrierung | `TOLERANCE`, `MAX_ITERATIONS`, `LENGTH` |
-| `ENCODER_CONNECTION_TEST` | Testet BLE Verbindung | - |
+### Kalibrierung
+
+| Befehl | Beschreibung | Parameter | Beispiel |
+|--------|--------------|-----------|----------|
+| `START_ENCODER_CALIBRATION` | **Automatische rotation_distance Kalibrierung** - Extrudiert Filament und misst tatsächliche Länge | `TOLERANCE=1.0` `MAX_ITERATIONS=5` `LENGTH=100` | `START_ENCODER_CALIBRATION` |
+| `CALIBRATE_ENCODER_WHEEL` | **Kalibriert Rad-Durchmesser** - Extrudiert bekannte Länge und berechnet Durchmesser | `LENGTH=100` | `CALIBRATE_ENCODER_WHEEL LENGTH=100` |
+| `ENCODER_CALIBRATE_WHEEL_DIRECT` | **Manuelle Rad-Kalibrierung** - Ohne Heizen! Filament per Hand durchschieben | `LENGTH=100` | `ENCODER_CALIBRATE_WHEEL_DIRECT LENGTH=100` |
+| `ENCODER_CALIBRATE_WHEEL_DIRECT_DONE` | **Beendet manuelle Kalibrierung** - Berechnet Durchmesser aus gemessener Länge | - | `ENCODER_CALIBRATE_WHEEL_DIRECT_DONE` |
+| `SAVE_ENCODER_WHEEL_DIAMETER` | **Speichert Rad-Durchmesser** in Config | - | `SAVE_ENCODER_WHEEL_DIAMETER` |
+
+### Position & Status
+
+| Befehl | Beschreibung | Parameter | Beispiel |
+|--------|--------------|-----------|----------|
+| `ENCODER_READ` | **Zeigt aktuelle Position** - Steps, mm, Geschwindigkeit | - | `ENCODER_READ` |
+| `ENCODER_ZERO` | **Position auf 0 zurücksetzen** - Nützlich vor manuellen Tests | - | `ENCODER_ZERO` |
+| `ENCODER_STATUS` | **System-Status anzeigen** - BLE-Verbindung, Config, Diagnostics | - | `ENCODER_STATUS` |
+| `ENCODER_TEST` | **Verbindungstest** - Prüft BLE und Encoder-Funktion | - | `ENCODER_TEST` |
+
+### Sensor-Diagnose (NEU!)
+
+| Befehl | Beschreibung | Parameter | Beispiel |
+|--------|--------------|-----------|----------|
+| `ENCODER_ALIGNMENT_TEST` | **10-Sekunden Test** - Rad drehen, System misst Magnet-Zentrierung und bewertet Ausrichtung | - | `ENCODER_ALIGNMENT_TEST` |
+| `ENCODER_DIAGNOSTICS_LIVE` | **Live-Monitor (Toggle)** - Zeigt Magnitude & AGC in Echtzeit (NUR via SSH/Serial!) | - | `ENCODER_DIAGNOSTICS_LIVE` |
+
+### Filament-Durchmesser (Optional - Hall-Sensor)
+
+| Befehl | Beschreibung | Parameter | Beispiel |
+|--------|--------------|-----------|----------|
+| `QUERY_FILAMENT_WIDTH` | **Zeigt gemessenen Durchmesser** in mm | - | `QUERY_FILAMENT_WIDTH` |
+| `QUERY_RAW_FILAMENT_WIDTH` | **Zeigt RAW ADC-Werte** für Kalibrierung | - | `QUERY_RAW_FILAMENT_WIDTH` |
+| `ENABLE_FILAMENT_WIDTH_SENSOR` | **Aktiviert automatische Extrusions-Anpassung** | - | `ENABLE_FILAMENT_WIDTH_SENSOR` |
+| `DISABLE_FILAMENT_WIDTH_SENSOR` | **Deaktiviert Sensor** | - | `DISABLE_FILAMENT_WIDTH_SENSOR` |
+| `ENABLE_FILAMENT_WIDTH_LOG` | **Aktiviert Console-Logging** | - | `ENABLE_FILAMENT_WIDTH_LOG` |
+| `RESET_FILAMENT_WIDTH_SENSOR` | **Setzt Sensor zurück** auf Nominal-Wert | - | `RESET_FILAMENT_WIDTH_SENSOR` |
 
 ---
 
