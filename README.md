@@ -56,7 +56,7 @@ ssh pi@mainsailos.local
 bash <(wget -qO- https://raw.githubusercontent.com/Printfail/filament-encoder-calibration/main/install.sh)
 
 # 4. In printer.cfg einfügen:
-[include Encoder/encoder_calibration.cfg]
+[include Encoder/*.cfg]
 
 # 5. BLE-Adresse anpassen & Klipper neustarten
 # 6. Fertig! START_ENCODER_CALIBRATION
@@ -314,7 +314,13 @@ sudo systemctl restart klipper
 
 **In `printer.cfg` einfügen:**
 ```ini
+[include Encoder/*.cfg]  # Inkludiert alle Encoder-Configs (empfohlen)
+```
+
+**Alternative (manuell):**
+```ini
 [include Encoder/encoder_calibration.cfg]
+[include Encoder/rotation_distance.cfg]
 ```
 
 **In `~/printer_data/config/Encoder/encoder_calibration.cfg` anpassen:**
@@ -693,7 +699,7 @@ sudo systemctl restart bluetooth
 ```ini
 # In printer.cfg:
 # [include nevermore.cfg]  ← Auskommentieren
-[include Encoder/encoder_calibration.cfg]
+[include Encoder/*.cfg]
 ```
 
 ---
