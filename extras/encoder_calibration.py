@@ -387,6 +387,11 @@ class EncoderCalibration:
             desc="Read current encoder position",
         )
         self.gcode.register_command(
+            "ENCODER_GET_POSITION_SILENT",
+            self.cmd_ENCODER_GET_POSITION_SILENT,
+            desc="Read encoder position silently (for macros)",
+        )
+        self.gcode.register_command(
             "ENCODER_PRINT_STATUS",
             self.cmd_ENCODER_PRINT_STATUS,
             desc="Print encoder system status",
@@ -400,6 +405,11 @@ class EncoderCalibration:
             "_ENCODER_DIAGNOSTICS_LIVE",
             self.cmd_ENCODER_DIAGNOSTICS_LIVE,
             desc="[SSH ONLY] Toggle live diagnostics monitor",
+        )
+        self.gcode.register_command(
+            "_START_MAX_FLOW_TEST",
+            self.cmd_START_MAX_FLOW_TEST,
+            desc="Test maximum hotend flow rate by detecting extruder slip",
         )
         
         # Add wheel diameter calibration command
@@ -623,6 +633,27 @@ class EncoderCalibration:
         except Exception as e:
             self._respond_error(f"Read failed: {e}")
     
+    def cmd_ENCODER_GET_POSITION_SILENT(self, gcmd):
+        """Read encoder position without console output - stores in macro variable"""
+        if not self.bg.is_connected():
+            # If not connected, set position to 0
+            self.gcode.run_script_from_command(
+                "SET_GCODE_VARIABLE MACRO=_ENCODER_LAST_POSITION VARIABLE=position VALUE=0.0"
+            )
+            return
+        
+        try:
+            steps, mm, speed = self.bg.run_async(self.bg.read_position())
+            # Store position in macro variable for use by other macros
+            self.gcode.run_script_from_command(
+                f"SET_GCODE_VARIABLE MACRO=_ENCODER_LAST_POSITION VARIABLE=position VALUE={mm}"
+            )
+        except Exception as e:
+            # On error, set position to 0
+            self.gcode.run_script_from_command(
+                "SET_GCODE_VARIABLE MACRO=_ENCODER_LAST_POSITION VARIABLE=position VALUE=0.0"
+            )
+    
     def cmd_ENCODER_PRINT_STATUS(self, gcmd):
         self._respond(f"{'═' * 40}")
         self._respond("📊  ENCODER STATUS")
@@ -729,6 +760,134 @@ class EncoderCalibration:
             self._respond("⏸️  Zum Stoppen: ENCODER_DIAGNOSTICS_LIVE nochmal ausführen")
         except Exception as e:
             self._respond_error(f"Start failed: {e}")
+    
+    cmd_START_MAX_FLOW_TEST_help = "Test maximum hotend flow rate"
+    def cmd_START_MAX_FLOW_TEST(self, gcmd):
+        """Test maximum hotend flow rate by detecting extruder slip"""
+        import math
+        import time
+        
+        if not self.bg.is_connected():
+            self._respond_error("❌ Encoder nicht verbunden!")
+            return
+        
+        # Get parameters
+        start_speed = gcmd.get_float('START_SPEED', 1.0)
+        end_speed = gcmd.get_float('END_SPEED', 25.0)
+        step = gcmd.get_float('STEP', 1.0)
+        extrude_length = gcmd.get_float('EXTRUDE_LENGTH', 50.0)
+        tolerance = gcmd.get_float('TOLERANCE', 95.0)
+        filament_dia = gcmd.get_float('FILAMENT_DIA', 1.75)
+        temp_min = gcmd.get_float('TEMP_MIN', 180.0)
+        
+        # Calculate filament area
+        filament_area = math.pi * ((filament_dia / 2.0) ** 2)
+        
+        # Get extruder temperature
+        extruder = self.printer.lookup_object('extruder')
+        current_temp = extruder.get_status(0)['temperature']
+        
+        # Temperature check
+        if current_temp < temp_min:
+            self._respond_error(f"⚠️ Hotend zu kalt! Aktuell: {current_temp:.1f}°C - Mindestens: {temp_min:.1f}°C")
+            self._respond_error("Heize auf mit: M109 S210")
+            return
+        
+        # Header
+        self._respond("╔══════════════════════════════════════════════════════╗")
+        self._respond("║       🔥 MAX FLOW RATE TEST - START                  ║")
+        self._respond("╠══════════════════════════════════════════════════════╣")
+        self._respond(f"║ Start Speed    : {start_speed} mm/s")
+        self._respond(f"║ End Speed      : {end_speed} mm/s")
+        self._respond(f"║ Step           : {step} mm/s")
+        self._respond(f"║ Extrude Length : {extrude_length} mm")
+        self._respond(f"║ Tolerance      : {tolerance}%")
+        self._respond(f"║ Filament Ø     : {filament_dia} mm")
+        self._respond(f"║ Hotend Temp    : {current_temp:.1f}°C")
+        self._respond("╠══════════════════════════════════════════════════════╣")
+        self._respond("║ Speed│ SOLL│  IST │  % │ Flow (mm³/s)│ Status║")
+        self._respond("╠══════╪═════╪══════╪════╪═════════════╪═══════╣")
+        
+        # Variables
+        current_speed = start_speed
+        last_good_flow = 0.0
+        last_good_speed = 0.0
+        stopped = False
+        
+        # Get toolhead for wait_moves
+        toolhead = self.printer.lookup_object('toolhead')
+        
+        # Set relative extrusion mode once
+        self.gcode.run_script_from_command("M83")
+        
+        # Loop through speeds
+        while current_speed <= end_speed and not stopped:
+            try:
+                # Reset encoder
+                self.bg.run_async(self.bg.reset_position())
+                time.sleep(0.2)
+                
+                # Extrude
+                feed_rate = int(current_speed * 60)
+                self.gcode.run_script_from_command(f"G1 E{extrude_length} F{feed_rate}")
+                
+                # WICHTIG: Warte bis Extrusion komplett ist!
+                toolhead.wait_moves()
+                time.sleep(0.3)  # Kurze Pause für Encoder-Stabilisierung
+                
+                # Read encoder position
+                steps, mm, speed = self.bg.run_async(self.bg.read_position())
+                
+                # Calculate
+                percent = (mm / extrude_length * 100.0) if extrude_length > 0 else 0.0
+                flow = current_speed * filament_area
+                
+                # Status symbol
+                if percent >= tolerance:
+                    status = "✅"
+                elif percent >= (tolerance - 5):
+                    status = "⚠️"
+                else:
+                    status = "❌"
+                
+                # Output
+                self._respond(f"║{current_speed:5.1f}│{extrude_length:4.0f}│{mm:5.1f}│{percent:3.0f}│{flow:12.1f}│  {status}  ║")
+                
+                # Check if under tolerance
+                if percent < tolerance:
+                    self._respond("╠══════════════════════════════════════════════════════╣")
+                    self._respond(f"║ ⚠️  LIMIT ERREICHT bei {current_speed} mm/s ({percent:.0f}%)           ║")
+                    if last_good_flow > 0:
+                        self._respond(f"║ 🎯  MAX FLOW: {last_good_flow:.1f} mm³/s @ {last_good_speed:.1f} mm/s      ║")
+                    else:
+                        self._respond("║ ❌  KEIN GUTER WERT! Zu schnell gestartet?           ║")
+                    stopped = True
+                else:
+                    # Save as last good value
+                    last_good_flow = flow
+                    last_good_speed = current_speed
+                
+                # Increase speed
+                current_speed += step
+                
+            except Exception as e:
+                self._respond_error(f"Fehler bei {current_speed} mm/s: {e}")
+                stopped = True
+        
+        # Footer
+        self._respond("╚══════════════════════════════════════════════════════╝")
+        self._respond("")
+        
+        # Final summary
+        if not stopped:
+            self._respond("✅ TEST KOMPLETT DURCHGELAUFEN!")
+            if last_good_flow > 0:
+                self._respond(f"🎯 MAX FLOW: {last_good_flow:.1f} mm³/s @ {last_good_speed:.1f} mm/s")
+                self._respond("💡 Tipp: Erhöhe END_SPEED für weitere Tests!")
+            else:
+                self._respond(f"⚠️ KEINE GUTEN WERTE! Kein Test erreichte {tolerance}%")
+        
+        self._respond("")
     
     def cmd_CALIBRATE_ENCODER_WHEEL(self, gcmd):
         """Calibrate encoder wheel diameter by measuring known filament length"""
