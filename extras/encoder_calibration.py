@@ -778,20 +778,14 @@ class EncoderCalibration:
         extrude_length = gcmd.get_float('EXTRUDE_LENGTH', 50.0)
         tolerance = gcmd.get_float('TOLERANCE', 95.0)
         filament_dia = gcmd.get_float('FILAMENT_DIA', 1.75)
-        temp_min = gcmd.get_float('TEMP_MIN', 180.0)
+        target_temp = gcmd.get_float('TARGET_TEMP', 210.0)
         
         # Calculate filament area
         filament_area = math.pi * ((filament_dia / 2.0) ** 2)
         
-        # Get extruder temperature
+        # Get extruder temperature (wird schon von M109 im Makro aufgeheizt)
         extruder = self.printer.lookup_object('extruder')
         current_temp = extruder.get_status(0)['temperature']
-        
-        # Temperature check
-        if current_temp < temp_min:
-            self._respond_error(f"⚠️ Hotend zu kalt! Aktuell: {current_temp:.1f}°C - Mindestens: {temp_min:.1f}°C")
-            self._respond_error("Heize auf mit: M109 S210")
-            return
         
         # Header
         self._respond("╔══════════════════════════════════════════════════════╗")
@@ -803,7 +797,7 @@ class EncoderCalibration:
         self._respond(f"║ Extrude Length : {extrude_length} mm")
         self._respond(f"║ Tolerance      : {tolerance}%")
         self._respond(f"║ Filament Ø     : {filament_dia} mm")
-        self._respond(f"║ Hotend Temp    : {current_temp:.1f}°C")
+        self._respond(f"║ Test Temp      : {target_temp:.0f}°C (Aktuell: {current_temp:.1f}°C)")
         self._respond("╠══════════════════════════════════════════════════════╣")
         self._respond("║ Speed│ SOLL│  IST │  % │ Flow (mm³/s)│ Status║")
         self._respond("╠══════╪═════╪══════╪════╪═════════════╪═══════╣")
