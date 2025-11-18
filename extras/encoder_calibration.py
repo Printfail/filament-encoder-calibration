@@ -175,13 +175,57 @@ class EncoderBackground:
             except Exception as e:
                 self.log.warning(f"Initial position read failed: {e}")
             
+            # Start background ADC updater for hall sensor (non-blocking)
+            adc_task = asyncio.create_task(self._adc_updater_loop())
+            
             # Stay connected until stop
             try:
                 while not self._should_stop.is_set() and client.is_connected:
                     await asyncio.sleep(1.0)
             finally:
+                # Cancel ADC updater
+                adc_task.cancel()
+                try:
+                    await adc_task
+                except asyncio.CancelledError:
+                    pass
+                
                 self._connected.clear()
                 self.log.info("Disconnected")
+    
+    async def _adc_updater_loop(self):
+        """Background loop to update ADC values for hall sensor (non-blocking)"""
+        self.log.info("Starting ADC background updater...")
+        
+        try:
+            while not self._should_stop.is_set():
+                try:
+                    # Read ADC values from Pico
+                    adc1, adc2 = await self.read_adc()
+                    
+                    # Update cached values in ADC pin objects (only if hall sensor is configured)
+                    if hasattr(self.calibration, 'encoder_pins'):
+                        encoder_pins = self.calibration.encoder_pins
+                        if encoder_pins and hasattr(encoder_pins, 'pins') and encoder_pins.pins:
+                            # Update ADC1 if it exists
+                            if 'encoder:adc1' in encoder_pins.pins:
+                                pin = encoder_pins.pins['encoder:adc1']
+                                pin._last_value = adc1 / 4095.0  # Normalize to 0.0-1.0
+                            
+                            # Update ADC2 if it exists
+                            if 'encoder:adc2' in encoder_pins.pins:
+                                pin = encoder_pins.pins['encoder:adc2']
+                                pin._last_value = adc2 / 4095.0  # Normalize to 0.0-1.0
+                    
+                except Exception as e:
+                    self.log.error(f"ADC updater error: {e}")
+                
+                # Update every 0.2 seconds (5x per second, fast enough for hall sensor)
+                await asyncio.sleep(0.2)
+                
+        except asyncio.CancelledError:
+            self.log.info("ADC updater stopped")
+            raise
     
     async def _discover_characteristics(self):
         """Discover GATT characteristics"""
@@ -876,6 +920,9 @@ class EncoderCalibration:
                 # Increase speed
                 current_speed += step
                 
+                # Give reactor time to process other tasks between iterations
+                toolhead.dwell(0.1)
+                
             except Exception as e:
                 self._respond_error(f"Fehler bei {current_speed} mm/s: {e}")
                 stopped = True
@@ -1320,9 +1367,12 @@ class EncoderADCPin:
             return self._calculate_nominal_adc()
     
     def _timer_callback(self, eventtime):
-        """Timer callback to read ADC and call user callback"""
+        """Timer callback to read ADC and call user callback
+        IMPORTANT: Must be non-blocking! Only use cached values."""
         try:
-            value = self._read_adc_value()
+            # WICHTIG: Verwende nur gecachten Wert, NIEMALS blockierendes BLE hier!
+            # Der Wert wird vom Background-Worker aktualisiert
+            value = self._last_value
             if self._callback:
                 self._callback(eventtime, value)
         except Exception as e:
