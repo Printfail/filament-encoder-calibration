@@ -30,7 +30,7 @@ Dieses System **misst die tatsächlich extrudierte Filament-Länge** mit einem h
 - 🔥 **MAX Flow Rate Test** (Automatische Hotend-Schmelzraten-Messung)
 - 🔧 Sensor-Alignment-Test (Magnet-Zentrierung prüfen)
 - 📊 Live-Diagnostics (Echtzeit Magnetfeld-Überwachung)
-- 📏 Hall-Sensor Integration (Filament-Durchmesser-Messung)
+- 📏 **Hall-Sensor mit Korrektur** (Filament-Durchmesser-Messung + Offset-Funktion)
 - 📡 Bluetooth LE (kabellos zwischen Pico W ↔ Raspberry Pi)
 
 ---
@@ -97,8 +97,8 @@ bash <(wget -qO- https://raw.githubusercontent.com/Printfail/filament-encoder-ca
 🔥 **MAX Flow Rate Test** - Automatische Hotend-Schmelzraten-Messung durch Extruder-Slip-Detection  
 🆕 **Sensor Alignment Tool** - Automatischer Test zur optimalen Sensor-Positionierung  
 🆕 **Live Diagnostics** - Echtzeit Magnetfeld-Überwachung für perfekte Montage  
-🆕 **Hall-Sensor Integration** - SS49E Filament-Durchmesser-Messung via virtuelle ADC-Pins  
-🆕 **Automatische Extrusion-Anpassung** - Kompatibel mit Klipper's `hall_filament_width_sensor`  
+🆕 **Hall-Sensor mit Korrektur** - SS49E Filament-Durchmesser-Messung via virtuelle ADC-Pins + Offset  
+🆕 **Automatische Extrusion-Anpassung** - Erweiterte Version von `hall_filament_width_sensor` mit Feinkorrektur  
 
 ---
 
@@ -273,8 +273,10 @@ chmod +x install.sh
 
 **Was das Script automatisch macht:**
 - ✅ Installiert `encoder_calibration.py` als Symlink in `~/klipper/klippy/extras/`
+- ✅ Installiert `filament_width_sensor_corrected.py` als Symlink in `~/klipper/klippy/extras/`
 - ✅ Erstellt `~/printer_data/config/Encoder/` Ordner
 - ✅ Kopiert `encoder_calibration.cfg` und `rotation_distance.cfg`
+- ✅ Löscht Python-Caches automatisch (verhindert Update-Probleme)
 - ✅ Installiert Python-Paket `bleak`
 - ✅ Bietet Klipper-Neustart an
 
@@ -582,57 +584,88 @@ Mag: 4200 | AGC: 156 | ⚠️ ZU STARK
 
 ---
 
-### 📏 Filament-Durchmesser Messung (Optional - NEU!)
+### 📏 Filament-Durchmesser Messung mit Korrektur (Optional - NEU!)
 
 **Hardware:** 2x SS49E Hall-Sensoren an GPIO 26 + 27
 
+**✨ NEU: Erweiterte Version mit Offset-Korrektur!**
+
 **Setup:**
 ```ini
-# In printer.cfg oder separate Datei:
-[hall_filament_width_sensor]
+# In encoder_calibration.cfg (bereits integriert):
+[filament_width_sensor_corrected]
 adc1: encoder:adc1  # ← Virtueller Pin vom Pico!
 adc2: encoder:adc2  # ← Virtueller Pin vom Pico!
-cal_dia1: 1.50
-cal_dia2: 2.00
-raw_dia1: 9500
-raw_dia2: 10500
+cal_dia1: 1.487
+cal_dia2: 1.994
+raw_dia1: 10381
+raw_dia2: 11006
 default_nominal_filament_diameter: 1.75
 max_difference: 0.200
 measurement_delay: 70
-enable: False
+
+# NEU: Feinkorrektur ohne Neukalibrierung!
+diameter_offset: 0.0  # ← Korrektur in mm (+/-)
+
+enable: True
+logging: True
 ```
 
 **Kalibrierung:**
 ```gcode
 # 1. Filament mit 1.50mm einlegen
-QUERY_RAW_FILAMENT_WIDTH
-# Notiere RAW-Wert (z.B. 9500)
+QUERY_RAW_FILAMENT_WIDTH_CORRECTED
+# Notiere RAW-Wert (z.B. 10381)
 
 # 2. Filament mit 2.00mm einlegen
-QUERY_RAW_FILAMENT_WIDTH
-# Notiere RAW-Wert (z.B. 10500)
+QUERY_RAW_FILAMENT_WIDTH_CORRECTED
+# Notiere RAW-Wert (z.B. 11006)
 
 # 3. Werte in Config eintragen
 ```
 
+**🎯 Feinkorrektur (NEU!):**
+```gcode
+# Sensor zeigt 1.72mm, Bügelmesser 1.732mm?
+# Differenz: +0.012mm
+
+# Live anpassen:
+SET_FILAMENT_WIDTH_OFFSET OFFSET=0.012
+
+# Oder in Config:
+diameter_offset: 0.012
+```
+
 **Verwendung:**
 ```gcode
-ENABLE_FILAMENT_WIDTH_SENSOR   # Aktivieren
-ENABLE_FILAMENT_WIDTH_LOG      # Logging aktivieren
-QUERY_FILAMENT_WIDTH           # Aktuellen Durchmesser anzeigen
+ENABLE_FILAMENT_WIDTH_SENSOR_CORRECTED   # Aktivieren
+ENABLE_FILAMENT_WIDTH_LOG_CORRECTED      # Logging aktivieren
+QUERY_FILAMENT_WIDTH_CORRECTED           # Aktuellen Durchmesser anzeigen
+SET_FILAMENT_WIDTH_OFFSET OFFSET=0.012   # Offset setzen
 ```
 
 **Was passiert:**
 - Pico liest SS49E Sensoren (12-bit ADC)
 - Sendet Werte via BLE
 - Klipper berechnet Filament-Durchmesser
+- **Wendet Offset-Korrektur an** (NEU!)
 - Passt automatisch Extrusion an (M221)
 
 **Beispiel:**
 ```
-Filament: 1.70mm (statt 1.75mm)
-→ Extrusion wird um ~3% reduziert
+Sensor zeigt: 1.72mm (nach Kalibrierung)
+Bügelmesser:  1.732mm (echter Wert)
+Offset:       +0.012mm
+
+→ Korrigierter Wert: 1.732mm
+→ Flow wird korrekt angepasst!
 ```
+
+**Vorteile:**
+- ✅ Keine Neukalibrierung nötig für kleine Abweichungen
+- ✅ Live-Anpassung während des Drucks möglich
+- ✅ Kompatibel mit Original `hall_filament_width_sensor`
+- ✅ Alle Commands mit `_CORRECTED` Suffix (keine Konflikte)
 
 ---
 
@@ -888,16 +921,20 @@ START_MAX_FLOW_TEST TARGET_TEMP=210 STEP=0.5 TOLERANCE=98
 - ✅ Vergleiche **verschiedene Filamente** (PLA vs PETG vs ABS)
 - ✅ Prüfe ob **Hotend-Upgrade** nötig ist
 
-### Filament-Durchmesser (Optional - Hall-Sensor)
+### Filament-Durchmesser mit Korrektur (Optional - Hall-Sensor)
 
 | Befehl | Beschreibung | Parameter | Beispiel |
 |--------|--------------|-----------|----------|
-| `QUERY_FILAMENT_WIDTH` | **Zeigt gemessenen Durchmesser** in mm | - | `QUERY_FILAMENT_WIDTH` |
-| `QUERY_RAW_FILAMENT_WIDTH` | **Zeigt RAW ADC-Werte** für Kalibrierung | - | `QUERY_RAW_FILAMENT_WIDTH` |
-| `ENABLE_FILAMENT_WIDTH_SENSOR` | **Aktiviert automatische Extrusions-Anpassung** | - | `ENABLE_FILAMENT_WIDTH_SENSOR` |
-| `DISABLE_FILAMENT_WIDTH_SENSOR` | **Deaktiviert Sensor** | - | `DISABLE_FILAMENT_WIDTH_SENSOR` |
-| `ENABLE_FILAMENT_WIDTH_LOG` | **Aktiviert Console-Logging** | - | `ENABLE_FILAMENT_WIDTH_LOG` |
-| `RESET_FILAMENT_WIDTH_SENSOR` | **Setzt Sensor zurück** auf Nominal-Wert | - | `RESET_FILAMENT_WIDTH_SENSOR` |
+| `QUERY_FILAMENT_WIDTH_CORRECTED` | **Zeigt gemessenen Durchmesser** in mm (mit Offset) | - | `QUERY_FILAMENT_WIDTH_CORRECTED` |
+| `QUERY_RAW_FILAMENT_WIDTH_CORRECTED` | **Zeigt RAW ADC-Werte** für Kalibrierung | - | `QUERY_RAW_FILAMENT_WIDTH_CORRECTED` |
+| `ENABLE_FILAMENT_WIDTH_SENSOR_CORRECTED` | **Aktiviert automatische Extrusions-Anpassung** | - | `ENABLE_FILAMENT_WIDTH_SENSOR_CORRECTED` |
+| `DISABLE_FILAMENT_WIDTH_SENSOR_CORRECTED` | **Deaktiviert Sensor** | - | `DISABLE_FILAMENT_WIDTH_SENSOR_CORRECTED` |
+| `ENABLE_FILAMENT_WIDTH_LOG_CORRECTED` | **Aktiviert Console-Logging** | - | `ENABLE_FILAMENT_WIDTH_LOG_CORRECTED` |
+| `DISABLE_FILAMENT_WIDTH_LOG_CORRECTED` | **Deaktiviert Console-Logging** | - | `DISABLE_FILAMENT_WIDTH_LOG_CORRECTED` |
+| `RESET_FILAMENT_WIDTH_SENSOR_CORRECTED` | **Setzt Sensor zurück** auf Nominal-Wert | - | `RESET_FILAMENT_WIDTH_SENSOR_CORRECTED` |
+| `SET_FILAMENT_WIDTH_OFFSET` | **🆕 Setzt Durchmesser-Offset** in mm (live anpassbar!) | `OFFSET=0.012` | `SET_FILAMENT_WIDTH_OFFSET OFFSET=0.012` |
+
+**💡 Hinweis:** Alle Commands haben `_CORRECTED` Suffix um Konflikte mit dem Original `hall_filament_width_sensor` zu vermeiden!
 
 ---
 
