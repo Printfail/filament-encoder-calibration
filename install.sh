@@ -66,29 +66,25 @@ fi
 
 SRCDIR="${SCRIPTPATH}"
 
-#####################################################################
-# LOGO & HEADER
-#####################################################################
-
 show_logo() {
     clear
     echo -e "${B_CYAN}"
     echo "╔════════════════════════════════════════════════════════════╗"
     echo -e "${B_CYAN}║${B_WHITE}                                                            ${B_CYAN}║${OFF}"
-    echo -e "${B_CYAN}║${B_GREEN}         ███████╗██╗██╗     █████╗ ███╗   ███╗███████╗       ${B_CYAN}║${OFF}"
-    echo -e "${B_CYAN}║${B_GREEN}         ██╔════╝██║██║    ██╔══██╗████╗ ████║██╔════╝       ${B_CYAN}║${OFF}"
-    echo -e "${B_CYAN}║${B_GREEN}         █████╗  ██║██║    ███████║██╔████╔██║█████╗         ${B_CYAN}║${OFF}"
-    echo -e "${B_CYAN}║${B_YELLOW}         ██╔══╝  ██║██║    ██╔══██║██║╚██╔╝██║██╔══╝         ${B_CYAN}║${OFF}"
-    echo -e "${B_CYAN}║${B_YELLOW}         ██║     ██║██║    ██║  ██║██║ ╚═╝ ██║███████╗       ${B_CYAN}║${OFF}"
-    echo -e "${B_CYAN}║${B_YELLOW}         ╚═╝     ╚═╝╚═╝    ╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝       ${B_CYAN}║${OFF}"
+    echo -e "${B_CYAN}║${B_GREEN}         ███████╗███╗   ██╗ ██████╗ ██████╗ ██████╗ ███████╗ ${B_CYAN}║${OFF}"
+    echo -e "${B_CYAN}║${B_GREEN}         ██╔════╝████╗  ██║██╔════╝ ██╔══██╗██╔════╝ ██╔════╝ ${B_CYAN}║${OFF}"
+    echo -e "${B_CYAN}║${B_GREEN}         █████╗  ██╔██╗ ██║██║  ███╗██████╔╝██║  ███╗█████╗   ${B_CYAN}║${OFF}"
+    echo -e "${B_CYAN}║${B_YELLOW}         ██╔══╝  ██║╚██╗██║██║   ██║██╔══██╗██║   ██║██╔══╝   ${B_CYAN}║${OFF}"
+    echo -e "${B_CYAN}║${B_YELLOW}         ███████╗██║ ╚████║╚██████╔╝██║  ██║╚██████╔╝███████╗ ${B_CYAN}║${OFF}"
+    echo -e "${B_CYAN}║${B_YELLOW}         ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ${B_CYAN}║${OFF}"
     echo -e "${B_CYAN}║${B_WHITE}                                                            ${B_CYAN}║${OFF}"
-    echo -e "${B_CYAN}║${B_CYAN}           Pico W Filament Encoder + Hall-Sensor            ${B_CYAN}║${OFF}"
+    echo -e "${B_CYAN}║${B_CYAN}           Pico W Filament ENCODER + Hall-Sensor            ${B_CYAN}║${OFF}"
     echo -e "${B_CYAN}║${B_WHITE}                    Version ${VERSION}                           ${B_CYAN}║${OFF}"
     echo -e "${B_CYAN}║${B_WHITE}                                                            ${B_CYAN}║${OFF}"
-    echo -e "${B_CYAN}╚════════════════════════════════════════════════════════════╝${OFF}"
-    echo -e "${OFF}"
-    echo ""
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo -e "${OFF}\n"
 }
+
 
 #####################################################################
 # HELPER FUNKTIONEN
@@ -131,6 +127,10 @@ check_source_files() {
         print_error "encoder_calibration.py nicht gefunden!"
         exit 1
     fi
+    if [ ! -f "${SRCDIR}/extras/filament_width_sensor_corrected.py" ]; then
+        print_error "filament_width_sensor_corrected.py nicht gefunden!"
+        exit 1
+    fi
     if [ ! -f "${SRCDIR}/config/encoder_calibration.cfg" ]; then
         print_error "encoder_calibration.cfg nicht gefunden!"
         exit 1
@@ -160,13 +160,30 @@ do_install() {
     check_source_files
     echo ""
 
-    # Python-Modul (Symlink wie bei Auto_Offset)
-    print_msg "Installiere Python-Modul..."
+    # Python-Module (Symlinks)
+    print_msg "Installiere Python-Module..."
+    
+    # encoder_calibration.py
     if [ -L "${KLIPPER_EXTRAS}/encoder_calibration.py" ] || [ -f "${KLIPPER_EXTRAS}/encoder_calibration.py" ]; then
         rm -f "${KLIPPER_EXTRAS}/encoder_calibration.py"
     fi
     ln -sf "${SRCDIR}/extras/encoder_calibration.py" "${KLIPPER_EXTRAS}/encoder_calibration.py"
-    print_success "Python-Modul verlinkt (Symlink)"
+    print_success "encoder_calibration.py verlinkt"
+    
+    # filament_width_sensor_corrected.py
+    if [ -L "${KLIPPER_EXTRAS}/filament_width_sensor_corrected.py" ] || [ -f "${KLIPPER_EXTRAS}/filament_width_sensor_corrected.py" ]; then
+        rm -f "${KLIPPER_EXTRAS}/filament_width_sensor_corrected.py"
+    fi
+    ln -sf "${SRCDIR}/extras/filament_width_sensor_corrected.py" "${KLIPPER_EXTRAS}/filament_width_sensor_corrected.py"
+    print_success "filament_width_sensor_corrected.py verlinkt"
+    echo ""
+    
+    # WICHTIG: Lösche Python-Caches um alte Versionen zu entfernen
+    print_msg "Lösche Python-Caches..."
+    rm -rf "${KLIPPER_EXTRAS}/__pycache__/encoder_calibration*.pyc" 2>/dev/null
+    rm -rf "${KLIPPER_EXTRAS}/__pycache__/filament_width_sensor_corrected*.pyc" 2>/dev/null
+    rm -rf "${KLIPPER_HOME}/klippy/__pycache__" 2>/dev/null
+    print_success "Caches gelöscht"
     echo ""
 
     # Config-Ordner
@@ -234,10 +251,25 @@ do_update() {
     echo -e "${B_YELLOW}═══════════════════════════════════════════════════════${OFF}"
     echo ""
 
-    print_msg "Aktualisiere Python-Modul (Symlink)..."
+    print_msg "Aktualisiere Python-Module (Symlinks)..."
+    
+    # encoder_calibration.py
     rm -f "${KLIPPER_EXTRAS}/encoder_calibration.py"
     ln -sf "${SRCDIR}/extras/encoder_calibration.py" "${KLIPPER_EXTRAS}/encoder_calibration.py"
-    print_success "Python-Modul aktualisiert"
+    print_success "encoder_calibration.py aktualisiert"
+    
+    # filament_width_sensor_corrected.py
+    rm -f "${KLIPPER_EXTRAS}/filament_width_sensor_corrected.py"
+    ln -sf "${SRCDIR}/extras/filament_width_sensor_corrected.py" "${KLIPPER_EXTRAS}/filament_width_sensor_corrected.py"
+    print_success "filament_width_sensor_corrected.py aktualisiert"
+    echo ""
+    
+    # WICHTIG: Lösche Python-Caches um alte Versionen zu entfernen
+    print_msg "Lösche Python-Caches..."
+    rm -rf "${KLIPPER_EXTRAS}/__pycache__/encoder_calibration*.pyc" 2>/dev/null
+    rm -rf "${KLIPPER_EXTRAS}/__pycache__/filament_width_sensor_corrected*.pyc" 2>/dev/null
+    rm -rf "${KLIPPER_HOME}/klippy/__pycache__" 2>/dev/null
+    print_success "Caches gelöscht"
     echo ""
 
     print_msg "Aktualisiere encoder_calibration.cfg (Makros)..."
@@ -278,11 +310,15 @@ do_uninstall() {
     fi
     echo ""
 
-    # Python-Modul
+    # Python-Module
+    print_msg "Entferne Python-Module..."
     if [ -L "${KLIPPER_EXTRAS}/encoder_calibration.py" ] || [ -f "${KLIPPER_EXTRAS}/encoder_calibration.py" ]; then
-        print_msg "Entferne Python-Modul..."
         rm -f "${KLIPPER_EXTRAS}/encoder_calibration.py"
-        print_success "Python-Modul entfernt"
+        print_success "encoder_calibration.py entfernt"
+    fi
+    if [ -L "${KLIPPER_EXTRAS}/filament_width_sensor_corrected.py" ] || [ -f "${KLIPPER_EXTRAS}/filament_width_sensor_corrected.py" ]; then
+        rm -f "${KLIPPER_EXTRAS}/filament_width_sensor_corrected.py"
+        print_success "filament_width_sensor_corrected.py entfernt"
     fi
 
     # Config-Ordner optional löschen
