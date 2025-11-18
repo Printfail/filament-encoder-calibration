@@ -444,7 +444,11 @@ class EncoderCalibration:
         # Register shutdown handler
         self.printer.register_event_handler("klippy:disconnect", self._handle_disconnect)
         
-        # Start background worker
+        # Register ready handler - start BLE AFTER Klipper is ready!
+        self.printer.register_event_handler("klippy:ready", self._handle_ready)
+    
+    def _handle_ready(self):
+        """Called when Klipper is ready - start BLE background worker"""
         self.bg.start()
         
         logging.info(f"Encoder calibration initialized: {self.name}")
