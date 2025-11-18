@@ -27,6 +27,7 @@ Dieses System **misst die tatsächlich extrudierte Filament-Länge** mit einem h
 5. Speichert in `printer.cfg` ✅
 
 **Zusätzlich:**
+- 🔥 **MAX Flow Rate Test** (Automatische Hotend-Schmelzraten-Messung)
 - 🔧 Sensor-Alignment-Test (Magnet-Zentrierung prüfen)
 - 📊 Live-Diagnostics (Echtzeit Magnetfeld-Überwachung)
 - 📏 Hall-Sensor Integration (Filament-Durchmesser-Messung)
@@ -93,6 +94,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/Printfail/filament-encoder-ca
 ✅ **Adaptive Noise Calibration** - Filtert Sensor-Rauschen automatisch  
 ✅ **Echtzeit-Feedback** - Live Filament-Geschwindigkeit und Position  
 ✅ **Iterative Verfeinerung** - Wiederholt Messung bis Toleranz erreicht  
+🔥 **MAX Flow Rate Test** - Automatische Hotend-Schmelzraten-Messung durch Extruder-Slip-Detection  
 🆕 **Sensor Alignment Tool** - Automatischer Test zur optimalen Sensor-Positionierung  
 🆕 **Live Diagnostics** - Echtzeit Magnetfeld-Überwachung für perfekte Montage  
 🆕 **Hall-Sensor Integration** - SS49E Filament-Durchmesser-Messung via virtuelle ADC-Pins  
@@ -831,6 +833,60 @@ int16_t detect_overflow(uint16_t current_angle) {
 |--------|--------------|-----------|----------|
 | `ENCODER_ALIGNMENT_TEST` | **10-Sekunden Test** - Rad drehen, System misst Magnet-Zentrierung und bewertet Ausrichtung | - | `ENCODER_ALIGNMENT_TEST` |
 | `ENCODER_DIAGNOSTICS_LIVE` | **Live-Monitor (Toggle)** - Zeigt Magnitude & AGC in Echtzeit (NUR via SSH/Serial!) | - | `ENCODER_DIAGNOSTICS_LIVE` |
+
+### MAX FLOW RATE TEST 🔥 (NEU!)
+
+| Befehl | Beschreibung | Parameter | Beispiel |
+|--------|--------------|-----------|----------|
+| `START_MAX_FLOW_TEST` | **Automatischer Hotend-Flow-Test** - Misst maximale Schmelzrate durch Extruder-Slip-Detection | `START_SPEED=1` `END_SPEED=25` `STEP=1` `EXTRUDE_LENGTH=50` `TOLERANCE=95` `FILAMENT_DIA=1.75` `TARGET_TEMP=210` | `START_MAX_FLOW_TEST TARGET_TEMP=210` |
+
+**Was macht der Test?**
+1. ✅ Extrudiert mit **steigender Geschwindigkeit** (1→2→3...→25 mm/s)
+2. ✅ Encoder misst **tatsächlich** extrudierte Menge via BLE
+3. ✅ Vergleicht **SOLL vs IST** in Prozent
+4. ✅ Stoppt bei **<95%** (= Extruder rutscht / Hotend überlastet)
+5. ✅ Gibt **MAX FLOW in mm³/s** aus
+6. ✅ **Volle Python-Implementierung** - schnell & zuverlässig!
+
+**Beispiel-Output:**
+```
+╔══════════════════════════════════════════════════════╗
+║       🔥 MAX FLOW RATE TEST - START                  ║
+╠══════════════════════════════════════════════════════╣
+║ Speed│ SOLL│  IST │  % │ Flow (mm³/s)│ Status║
+╠══════╪═════╪══════╪════╪═════════════╪═══════╣
+║  1.0│  50│ 50.0│100│          2.4│  ✅  ║
+║  5.0│  50│ 50.0│100│         12.0│  ✅  ║
+║ 10.0│  50│ 49.8│ 99│         24.0│  ✅  ║
+║ 12.0│  50│ 48.1│ 96│         28.8│  ✅  ║
+║ 14.0│  50│ 46.8│ 94│         33.6│  ⚠️  ║
+╠══════════════════════════════════════════════════════╣
+║ ⚠️  LIMIT ERREICHT bei 14.0 mm/s (94%)               ║
+║ 🎯  MAX FLOW: 28.8 mm³/s @ 12.0 mm/s                 ║
+╚══════════════════════════════════════════════════════╝
+
+🎯 MAX FLOW TEST ABGESCHLOSSEN!
+
+**Verwendung:**
+```gcode
+# 1. Test starten (heizt automatisch auf 210°C)
+START_MAX_FLOW_TEST
+
+# 2. Mit Custom-Temperatur
+START_MAX_FLOW_TEST TARGET_TEMP=230
+
+# 3. Mit Custom-Parametern (z.B. schnellerer Test)
+START_MAX_FLOW_TEST TARGET_TEMP=210 START_SPEED=2 END_SPEED=30 STEP=2
+
+# 4. Sehr präziser Test (kleine Schritte)
+START_MAX_FLOW_TEST TARGET_TEMP=210 STEP=0.5 TOLERANCE=98
+```
+
+**Wozu?**
+- ✅ Finde **optimale Druck-Geschwindigkeit** für dein Hotend
+- ✅ Teste **verschiedene Temperaturen** (190°C vs 230°C)
+- ✅ Vergleiche **verschiedene Filamente** (PLA vs PETG vs ABS)
+- ✅ Prüfe ob **Hotend-Upgrade** nötig ist
 
 ### Filament-Durchmesser (Optional - Hall-Sensor)
 
