@@ -803,14 +803,18 @@ class EncoderCalibration:
         except:
             pass  # Hall sensor not present or no logging attribute
         
-        # Header (kompakter und klarer)
+        # Header (kompakter und klarer) - FIXED WIDTH: 54 chars (56 with emoji compensation)
         self._respond("")
         self._respond("╔══════════════════════════════════════════════════════╗")
         self._respond("║       🔥 MAX FLOW RATE TEST                          ║")
         self._respond("╠══════════════════════════════════════════════════════╣")
-        self._respond(f"║ Geschwindigkeit: {start_speed} → {end_speed} mm/s (Δ{step})")
-        self._respond(f"║ Extrusion      : {extrude_length} mm @ {target_temp:.0f}°C")
-        self._respond(f"║ Filament       : ⌀{filament_dia} mm | Toleranz: {tolerance}%")
+        # Note: → emoji takes 1 extra column, ⌀ takes 1 extra column
+        line1 = f"║ Geschwindigkeit: {start_speed} → {end_speed} mm/s (Δ{step})"
+        self._respond(line1.ljust(54) + "║")  # -2 for emoji (→,Δ)
+        line2 = f"║ Extrusion      : {extrude_length} mm @ {target_temp:.0f}°C"
+        self._respond(line2.ljust(56) + "║")  # No emoji
+        line3 = f"║ Filament       : ⌀{filament_dia} mm | Toleranz: {tolerance}%"
+        self._respond(line3.ljust(55) + "║")  # -1 for emoji (⌀)
         self._respond("╠══════════════════════════════════════════════════════╣")
         self._respond("║ mm/s │ Soll│ Ist │  % │  mm³/s │ Status          ║")
         self._respond("╠══════╪═════╪═════╪════╪════════╪═════════════════╣")
@@ -857,8 +861,10 @@ class EncoderCalibration:
                 else:
                     status = "❌ SLIP"
                 
-                # Output (kompakter und klarer)
-                self._respond(f"║ {current_speed:4.1f} │ {extrude_length:3.0f} │ {mm:3.1f} │{percent:3.0f} │ {flow:6.1f} │ {status:15} ║")
+                # Output (kompakter und klarer) - FIXED WIDTH (emoji compensation)
+                line = f"║ {current_speed:4.1f} │ {extrude_length:3.0f} │ {mm:3.1f} │{percent:3.0f} │ {flow:6.1f} │ {status}"
+                # Status has 1 emoji, compensate -1
+                self._respond(line.ljust(55) + "║")
                 
                 # Check if under tolerance
                 if percent < tolerance:
@@ -875,30 +881,38 @@ class EncoderCalibration:
                 self._respond_error(f"Fehler bei {current_speed} mm/s: {e}")
                 stopped = True
         
-        # Final summary box (immer anzeigen)
+        # Final summary box (immer anzeigen) - FIXED WIDTH: 56 chars (with emoji compensation)
         self._respond("╠══════════════════════════════════════════════════════╣")
         
         if stopped:
-            # Test stopped due to slip
-            self._respond(f"║ ⚠️  Extruder-Slip erkannt! Test gestoppt.          ║")
+            # Test stopped due to slip (1 emoji: ⚠️)
+            line = "║ ⚠️  Extruder-Slip erkannt! Test gestoppt."
+            self._respond(line.ljust(55) + "║")
         else:
-            # Test completed successfully
-            self._respond("║ ✅  Test erfolgreich durchgelaufen bis END_SPEED    ║")
+            # Test completed successfully (1 emoji: ✅)
+            line = "║ ✅  Test erfolgreich durchgelaufen bis END_SPEED"
+            self._respond(line.ljust(55) + "║")
         
         self._respond("╠══════════════════════════════════════════════════════╣")
         
         if last_good_flow > 0:
-            # Show results
-            self._respond(f"║ 🎯  MAX FLOW RATE: {last_good_flow:.1f} mm³/s                     ║")
-            self._respond(f"║ ✅  Max Speed Safe: {last_good_speed:.1f} mm/s                     ║")
+            # Show results (each line has 1 emoji)
+            line1 = f"║ 🎯  MAX FLOW RATE: {last_good_flow:.1f} mm³/s"
+            self._respond(line1.ljust(55) + "║")
+            line2 = f"║ ✅  Max Speed Safe: {last_good_speed:.1f} mm/s"
+            self._respond(line2.ljust(55) + "║")
             self._respond("╠══════════════════════════════════════════════════════╣")
-            self._respond("║ 💡  Empfehlung für Slicer:                          ║")
+            line3 = "║ 💡  Empfehlung für Slicer:"
+            self._respond(line3.ljust(55) + "║")
             slicer_value = last_good_flow * 0.9
-            self._respond(f"║     Volumetric Speed: ~{slicer_value:.1f} mm³/s              ║")
-            self._respond("║     (90% vom Maximum für Sicherheitsreserve)        ║")
+            line4 = f"║     Volumetric Speed: ~{slicer_value:.1f} mm³/s"
+            self._respond(line4.ljust(56) + "║")  # No emoji
+            line5 = "║     (90% vom Maximum für Sicherheitsreserve)"
+            self._respond(line5.ljust(56) + "║")  # No emoji
         else:
-            # No valid values
-            self._respond(f"║ ❌  Keine gültigen Werte! START_SPEED zu hoch?      ║")
+            # No valid values (1 emoji: ❌)
+            line = "║ ❌  Keine gültigen Werte! START_SPEED zu hoch?"
+            self._respond(line.ljust(55) + "║")
         
         self._respond("╚══════════════════════════════════════════════════════╝")
         
