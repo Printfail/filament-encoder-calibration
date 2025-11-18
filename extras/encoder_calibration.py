@@ -43,11 +43,12 @@ CHAR_UUID_ADC = UUID("12345678-1234-1234-1234-123456789005")
 class EncoderBackground:
     """Background thread that handles BLE communication"""
     
-    def __init__(self, name, calibration, ble_address, connection_timeout):
+    def __init__(self, name, calibration, ble_address, connection_timeout, startup_delay):
         self.name = name
         self.calibration = calibration
         self.ble_address = ble_address
         self.connection_timeout = connection_timeout
+        self.startup_delay = startup_delay
         
         self.log = logging.getLogger(f"encoder_bg.{name}")
         
@@ -107,8 +108,8 @@ class EncoderBackground:
     async def _worker_main(self):
         """Main async worker"""
         # WICHTIG: Initial delay um BLE-Konflikte mit anderen Modulen (z.B. Nevermore) zu vermeiden
-        self.log.info("Waiting 2 seconds before BLE scan (avoiding conflicts)...")
-        await asyncio.sleep(2)
+        self.log.info(f"Waiting {self.startup_delay} seconds before BLE scan (avoiding conflicts)...")
+        await asyncio.sleep(self.startup_delay)
         
         while not self._should_stop.is_set():
             try:
@@ -328,6 +329,7 @@ class EncoderCalibration:
         # BLE Config
         self.ble_address = config.get("ble_address", None)
         self.connection_timeout = config.getfloat("connection_timeout", 30.0)
+        self.startup_delay = config.getfloat("startup_delay", 5.0)
         
         # Hardware Config
         self.encoder_resolution = config.getint("encoder_resolution", 16384)
@@ -351,7 +353,7 @@ class EncoderCalibration:
         
         # Background worker
         self.bg = EncoderBackground(
-            self.name, self, self.ble_address, self.connection_timeout
+            self.name, self, self.ble_address, self.connection_timeout, self.startup_delay
         )
         self.bg._printer = self.printer  # For pin manager
         
