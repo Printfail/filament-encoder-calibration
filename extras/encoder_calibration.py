@@ -119,8 +119,8 @@ class EncoderBackground:
                 self._connected.clear()
                 
                 if not self._should_stop.is_set():
-                    self.log.info("Retrying in 10 seconds...")
-                    await asyncio.sleep(10)
+                    self.log.info("Retrying in 30 seconds...")
+                    await asyncio.sleep(30)  # Longer retry delay to reduce CPU load
     
     async def _connect_and_run(self):
         """Connect to encoder and run"""
@@ -769,9 +769,8 @@ class EncoderCalibration:
     
     cmd_START_MAX_FLOW_TEST_help = "Test maximum hotend flow rate"
     def cmd_START_MAX_FLOW_TEST(self, gcmd):
-        """Test maximum hotend flow rate by detecting extruder slip"""
+        """Max flow rate test - find maximum extrusion rate before slip"""
         import math
-        import time
         
         if not self.bg.is_connected():
             self._respond_error("❌ Encoder nicht verbunden!")
@@ -836,7 +835,7 @@ class EncoderCalibration:
             try:
                 # Reset encoder
                 self.bg.run_async(self.bg.reset_position())
-                time.sleep(0.2)
+                toolhead.dwell(0.2)  # Use dwell instead of sleep (reactor-friendly)
                 
                 # Extrude
                 feed_rate = int(current_speed * 60)
@@ -844,7 +843,7 @@ class EncoderCalibration:
                 
                 # WICHTIG: Warte bis Extrusion komplett ist!
                 toolhead.wait_moves()
-                time.sleep(0.3)  # Kurze Pause für Encoder-Stabilisierung
+                toolhead.dwell(0.3)  # Reactor-friendly pause für Encoder-Stabilisierung
                 
                 # Read encoder position
                 steps, mm, speed = self.bg.run_async(self.bg.read_position())
