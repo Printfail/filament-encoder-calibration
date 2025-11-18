@@ -793,20 +793,27 @@ class EncoderCalibration:
         extruder = self.printer.lookup_object('extruder')
         current_temp = extruder.get_status(0)['temperature']
         
-        # Header
+        # Disable hall sensor logging during test
+        hall_sensor = None
+        try:
+            hall_sensor = self.printer.lookup_object('hall_filament_width_sensor')
+            if hall_sensor and hasattr(hall_sensor, 'logging'):
+                hall_sensor.logging = False
+                self._respond("ℹ️ Hall Sensor logging deaktiviert für Test")
+        except:
+            pass  # Hall sensor not present or no logging attribute
+        
+        # Header (kompakter und klarer)
+        self._respond("")
         self._respond("╔══════════════════════════════════════════════════════╗")
-        self._respond("║       🔥 MAX FLOW RATE TEST - START                  ║")
+        self._respond("║       🔥 MAX FLOW RATE TEST                          ║")
         self._respond("╠══════════════════════════════════════════════════════╣")
-        self._respond(f"║ Start Speed    : {start_speed} mm/s")
-        self._respond(f"║ End Speed      : {end_speed} mm/s")
-        self._respond(f"║ Step           : {step} mm/s")
-        self._respond(f"║ Extrude Length : {extrude_length} mm")
-        self._respond(f"║ Tolerance      : {tolerance}%")
-        self._respond(f"║ Filament Ø     : {filament_dia} mm")
-        self._respond(f"║ Test Temp      : {target_temp:.0f}°C (Aktuell: {current_temp:.1f}°C)")
+        self._respond(f"║ Geschwindigkeit: {start_speed} → {end_speed} mm/s (Δ{step})")
+        self._respond(f"║ Extrusion      : {extrude_length} mm @ {target_temp:.0f}°C")
+        self._respond(f"║ Filament       : ⌀{filament_dia} mm | Toleranz: {tolerance}%")
         self._respond("╠══════════════════════════════════════════════════════╣")
-        self._respond("║ Speed│ SOLL│  IST │  % │ Flow (mm³/s)│ Status║")
-        self._respond("╠══════╪═════╪══════╪════╪═════════════╪═══════╣")
+        self._respond("║ mm/s │ Soll│ Ist │  % │  mm³/s │ Status          ║")
+        self._respond("╠══════╪═════╪═════╪════╪════════╪═════════════════╣")
         
         # Variables
         current_speed = start_speed
@@ -842,25 +849,19 @@ class EncoderCalibration:
                 percent = (mm / extrude_length * 100.0) if extrude_length > 0 else 0.0
                 flow = current_speed * filament_area
                 
-                # Status symbol
+                # Status symbol and text
                 if percent >= tolerance:
-                    status = "✅"
+                    status = "✅ OK"
                 elif percent >= (tolerance - 5):
-                    status = "⚠️"
+                    status = "⚠️  Grenze"
                 else:
-                    status = "❌"
+                    status = "❌ SLIP"
                 
-                # Output
-                self._respond(f"║{current_speed:5.1f}│{extrude_length:4.0f}│{mm:5.1f}│{percent:3.0f}│{flow:12.1f}│  {status}  ║")
+                # Output (kompakter und klarer)
+                self._respond(f"║ {current_speed:4.1f} │ {extrude_length:3.0f} │ {mm:3.1f} │{percent:3.0f} │ {flow:6.1f} │ {status:15} ║")
                 
                 # Check if under tolerance
                 if percent < tolerance:
-                    self._respond("╠══════════════════════════════════════════════════════╣")
-                    self._respond(f"║ ⚠️  LIMIT ERREICHT bei {current_speed} mm/s ({percent:.0f}%)           ║")
-                    if last_good_flow > 0:
-                        self._respond(f"║ 🎯  MAX FLOW: {last_good_flow:.1f} mm³/s @ {last_good_speed:.1f} mm/s      ║")
-                    else:
-                        self._respond("║ ❌  KEIN GUTER WERT! Zu schnell gestartet?           ║")
                     stopped = True
                 else:
                     # Save as last good value
@@ -874,18 +875,38 @@ class EncoderCalibration:
                 self._respond_error(f"Fehler bei {current_speed} mm/s: {e}")
                 stopped = True
         
-        # Footer
-        self._respond("╚══════════════════════════════════════════════════════╝")
-        self._respond("")
+        # Final summary box (immer anzeigen)
+        self._respond("╠══════════════════════════════════════════════════════╣")
         
-        # Final summary
-        if not stopped:
-            self._respond("✅ TEST KOMPLETT DURCHGELAUFEN!")
-            if last_good_flow > 0:
-                self._respond(f"🎯 MAX FLOW: {last_good_flow:.1f} mm³/s @ {last_good_speed:.1f} mm/s")
-                self._respond("💡 Tipp: Erhöhe END_SPEED für weitere Tests!")
-            else:
-                self._respond(f"⚠️ KEINE GUTEN WERTE! Kein Test erreichte {tolerance}%")
+        if stopped:
+            # Test stopped due to slip
+            self._respond(f"║ ⚠️  Extruder-Slip erkannt! Test gestoppt.          ║")
+        else:
+            # Test completed successfully
+            self._respond("║ ✅  Test erfolgreich durchgelaufen bis END_SPEED    ║")
+        
+        self._respond("╠══════════════════════════════════════════════════════╣")
+        
+        if last_good_flow > 0:
+            # Show results
+            self._respond(f"║ 🎯  MAX FLOW RATE: {last_good_flow:.1f} mm³/s                     ║")
+            self._respond(f"║ ✅  Max Speed Safe: {last_good_speed:.1f} mm/s                     ║")
+            self._respond("╠══════════════════════════════════════════════════════╣")
+            self._respond("║ 💡  Empfehlung für Slicer:                          ║")
+            slicer_value = last_good_flow * 0.9
+            self._respond(f"║     Volumetric Speed: ~{slicer_value:.1f} mm³/s              ║")
+            self._respond("║     (90% vom Maximum für Sicherheitsreserve)        ║")
+        else:
+            # No valid values
+            self._respond(f"║ ❌  Keine gültigen Werte! START_SPEED zu hoch?      ║")
+        
+        self._respond("╚══════════════════════════════════════════════════════╝")
+        
+        # Re-enable hall sensor logging
+        if hall_sensor and hasattr(hall_sensor, 'logging'):
+            hall_sensor.logging = True
+            self._respond("")
+            self._respond("ℹ️ Hall Sensor logging wieder aktiviert")
         
         self._respond("")
     
